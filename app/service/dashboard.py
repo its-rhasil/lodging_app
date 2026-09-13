@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.service.status_service import get_effective_status
-from app.crud.room import get_room_for_dashboard
+from app.service.room_service import get_room_for_dashboard
 from app.schemas.dashboard import RoomCard, DashboardResponse, DashboardSummary
 
 def build_dashboard(db: Session, tenant_id: int)-> DashboardResponse:

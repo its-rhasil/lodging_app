@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.service import room_type_service
-from app.crud import room_type
 from app.models.user import User
 from app.schemas.room_type import RoomtypeCreate, RoomTypeResponse
 from app.core.deps import get_current_user
@@ -22,5 +21,5 @@ def create_room_type(payload: RoomtypeCreate, db: Session = Depends(get_db), cur
 
 router.get("/", response_model = RoomTypeResponse)
 def list_room_type(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return room_type.list_room_type(db = db, tenant_id= current_user.tenant_id)
+    return room_type_service.list_room_type(db = db, tenant_id= current_user.tenant_id)
 
