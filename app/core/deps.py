@@ -16,7 +16,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
 
     if session is None:
         raise HTTPException(status_code=401, detail="Invalid token")
-    if session.revoked:
+    if session.revoked_at:
         raise HTTPException(status_code=401, detail="Session revoked")
     if session.expires_at <= datetime.now(timezone.utc):
         raise HTTPException(status_code=401, detail="Session Expired")

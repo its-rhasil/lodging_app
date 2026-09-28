@@ -18,5 +18,5 @@ def generate_token() -> str:
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
-def get_token_expiry(days: int = 7) -> datetime:
+def get_token_expiry() -> datetime:
     return datetime.now(timezone.utc) + timedelta(minutes=settings.session_expires_minutes)
