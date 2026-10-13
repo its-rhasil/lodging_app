@@ -40,7 +40,6 @@ class RoomType(Base):
 
     name = Column(String, nullable=False)
     description = Column(String)
-    default_price = Column(Numeric(10, 2), nullable=False)
     capacity = Column(Integer, nullable=False)
 
     created_at = Column(
@@ -51,6 +50,22 @@ class RoomType(Base):
 
     tenant = relationship("Tenant", back_populates="room_types")
     rooms = relationship("Room", back_populates="room_type")
+    prices = relationship("RoomTypePrice", back_populates="room_type", cascade="all, delete-orphan")
+
+
+class RoomTypePrice(Base):
+    __tablename__ = "room_type_prices"
+    __table_args__ = (
+        UniqueConstraint("room_type_id", "occupancy", name="uq_price_per_occupancy"),
+        CheckConstraint("occupancy > 0", name="ck_occupancy_positive"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    room_type_id = Column(Integer, ForeignKey("room_types.id"), nullable=False)
+    occupancy = Column(Integer, nullable=False)
+    price = Column(Numeric(10, 2), nullable=False)
+
+    room_type = relationship("RoomType", back_populates="prices")
 
 
 class Room(Base):
@@ -99,3 +114,4 @@ class Room(Base):
     tenant = relationship("Tenant", back_populates="rooms")
     room_type = relationship("RoomType", back_populates="rooms")
     stays = relationship("Stay", back_populates="room")
+

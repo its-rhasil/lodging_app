@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
+from fastapi import HTTPException
 
 from app.models.user import User
 from app.models.session import UserSession
@@ -51,8 +52,6 @@ def signup_tenant(db: Session, tenant_name: str, admin_email: str, admin_phone: 
     return tenant, admin
 
 def register(db: Session, email: str, password: str, role: str, name: str, acting_user: User) -> User:
-    if acting_user.role != "admin":
-        raise PermissionError("Access Denied!")
     existing = db.query(User).filter(User.email == email).first()
     if existing:
         raise ValueError("Email already registered!")
@@ -66,14 +65,11 @@ def register(db: Session, email: str, password: str, role: str, name: str, actin
     return user
 
 def deactivate(db: Session, acting_user: User, target_user_id: int):
-    if acting_user.role != "admin":
-        raise PermissionError("Acesss Denied!")
-
     target = db.query(User).filter(User.id == target_user_id, User.tenant_id == acting_user.tenant_id).first()
     if target is None:
-        raise ValueError("User not found!")
+        raise HTTPException(status_code=404, detail="User not found!")
     if target.id == acting_user.id:
-        raise  ValueError("Owner can't deactivate themselves!")
+        raise  HTTPException(status_code=403, detail="Owner can't deactivate themselves!")
 
     target.is_active = False
 
@@ -97,7 +93,4 @@ def logout(db: Session, token: str):
         db.commit()
 
 def list_users(db: Session, acting_user: User):
-    if acting_user.role != "admin":
-        raise PermissionError("Access Denied!")
-
     return db.query(User).filter(User.tenant_id == acting_user.tenant_id).all()

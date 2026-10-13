@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, require_role
 from app.service import auth_service
 from app.schemas.auth import LoginRequest, SignupRequest, SignupResponse, RegisterRequest, RegisterResponse, UserResponse
 
@@ -68,7 +68,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     }
 
 @router.post("/register", response_model=RegisterResponse)
-def signup(payload: RegisterRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def signup(payload: RegisterRequest, db: Session = Depends(get_db), current_user: User = Depends(require_role("admin"))):
     try:
         user = auth_service.register(
             db=db,
@@ -85,7 +85,7 @@ def signup(payload: RegisterRequest, db: Session = Depends(get_db), current_user
     return user
 
 @router.get("/users",response_model=list[UserResponse])
-def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def list_users(db: Session = Depends(get_db), current_user: User = Depends(require_role("admin"))):
     try:
         return auth_service.list_users(
             db = db,
@@ -95,10 +95,14 @@ def list_users(db: Session = Depends(get_db), current_user: User = Depends(get_c
         raise HTTPException(status_code=403, detail=str(e))
 
 @router.patch("/{user_id}/deactivate", response_model=UserResponse)
-def deactivate(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def deactivate(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_role("admin"))):
     try:
         return auth_service.deactivate(db = db, acting_user= current_user, target_user_id= user_id)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/me", response_model=UserResponse)
+def get_me(current_user: User = Depends(get_current_user)):
+    return current_user

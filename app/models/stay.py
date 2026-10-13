@@ -30,9 +30,10 @@ class Stay(Base):
     status = Column(String, nullable=False, default="active")
     planned_check_in_at = Column(DateTime(timezone=True))
     actual_check_in_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    expected_checkout_at = Column(DateTime(timezone=True), nullable=False)
+    expected_checkout_at = Column(DateTime(timezone=True), nullable=True)
     actual_checkout_at = Column(DateTime(timezone=True), nullable=True)
     agreed_price = Column(Numeric(10, 2), nullable=False)
+    occupancy = Column(Integer, nullable = False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     room = relationship("Room", back_populates="stays")

@@ -16,3 +16,5 @@ class Tenant(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     users = relationship("User", back_populates="tenant")
+    room_types = relationship("RoomType", back_populates="tenant")
+    rooms = relationship("Room", back_populates="tenant")

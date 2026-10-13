@@ -19,6 +19,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     tenant_id = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     email = Column(String, nullable=False, unique= True)
+    name = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
     role = Column(String, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
