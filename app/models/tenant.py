@@ -18,3 +18,4 @@ class Tenant(Base):
     users = relationship("User", back_populates="tenant")
     room_types = relationship("RoomType", back_populates="tenant")
     rooms = relationship("Room", back_populates="tenant")
+    custom_roles = relationship("TenantRole",back_populates="tenant",cascade="all, delete-orphan")
