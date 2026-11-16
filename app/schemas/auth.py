@@ -1,45 +1,18 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
+
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    email: EmailStr
+    # No minimum here: length rules apply when a password is set, not when one is checked.
+    password: str = Field(min_length=1, max_length=128)
 
-class SignupRequest(BaseModel):
-    tenant_name: str
-    admin_phone: str
-    admin_email: str
-    admin_password: str
-    address: str | None = None
-    name: str
 
-class SignupResponse(BaseModel):
-    tenant_id: int
-    tenant_name: str
-    user_id: int
-    name: str
-    email: str
-    address: str | None
-
-class RegisterRequest(BaseModel):
-    email: str
-    password: str
-    name: str
-    role: str
-
-class RegisterResponse(BaseModel):
+class MeResponse(BaseModel):
+    id: int
     tenant_id: int
     name: str
-    id: int
     email: str
-    role: str
+    role_code: str
+    permissions: list[str]  # effective set; the frontend uses it to show or hide actions
 
-    model_config = {"from_attributes": True}
-
-class UserResponse(BaseModel):
-    id: int
-    name: str
-    email: str
-    role: str
-    is_active: bool
-
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)

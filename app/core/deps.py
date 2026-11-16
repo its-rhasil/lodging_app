@@ -1,36 +1,46 @@
-from fastapi import Depends, HTTPException, Request
+"""Request dependencies: who is calling, and may they do this (architecture.md §5, §6.4).
+
+Every route declares one of:
+- Depends(require_permission("<code>")) for tenant endpoints;
+- Depends(require_platform_user) for platform (superadmin) endpoints;
+- Depends(get_current_principal) only for "about me" endpoints (e.g. /auth/me);
+- nothing, only for the public allow-list (login, logout, health).
+tests/unit/test_route_guards.py checks this for every route in the app.
+"""
+from fastapi import Depends, Request
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
+
+from app.core.cookies import PLATFORM_SESSION_COOKIE, TENANT_SESSION_COOKIE
+from app.core.errors import PermissionDenied
+from app.core.permissions import PERMISSIONS
+from app.core.principal import Principal
 from app.database import get_db
-from app.models.user import User
-from app.models.session import UserSession
-from app.core.security import hash_token
+from app.service import auth_service, platform_service
 
 
-def get_current_user(request: Request, db: Session = Depends(get_db)):
-    token = request.cookies.get("access_token")
-    if token is None:
-        raise HTTPException(status_code=401, detail="Not Authenticated")
-    hashed_token = hash_token(token)
-    session = db.query(UserSession).filter(UserSession.token_hash == hashed_token).first()
+def get_current_principal(request: Request, db: Session = Depends(get_db)) -> Principal:
+    return auth_service.authenticate_session(db, request.cookies.get(TENANT_SESSION_COOKIE))
 
-    if session is None:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    if session.revoked_at:
-        raise HTTPException(status_code=401, detail="Session revoked")
-    if session.expires_at <= datetime.now(timezone.utc):
-        raise HTTPException(status_code=401, detail="Session Expired")
 
-    user = db.query(User).filter(User.id == session.user_id, User.is_active == True).first()
+def require_platform_user(request: Request, db: Session = Depends(get_db)) -> Principal:
+    """Platform endpoints. Only the platform cookie counts; a tenant cookie is ignored."""
+    return platform_service.authenticate_session(db, request.cookies.get(PLATFORM_SESSION_COOKIE))
 
-    if user is None:
-        raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    return user
+require_platform_user.platform_guard = True  # read by the route-guard test
 
-def require_role(*allowed_roles: str):
-    def checker(current_user: User = Depends(get_current_user)) -> User:
-        if current_user.role not in allowed_roles:
-            raise HTTPException(status_code=403, detail="Access Denied!")
-        return current_user
-    return checker
+
+def require_permission(code: str):
+    """Dependency factory. Unknown codes fail at import time, so a typo can't ship."""
+    if code not in PERMISSIONS:
+        raise ValueError(f"Unknown permission code: {code!r}")
+
+    def dependency(principal: Principal = Depends(get_current_principal)) -> Principal:
+        if not principal.has(code):
+            raise PermissionDenied(
+                "You don't have permission to do this.", details={"permission": code},
+            )
+        return principal
+
+    dependency.required_permission = code  # read by the route-guard test
+    return dependency

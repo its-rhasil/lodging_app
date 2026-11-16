@@ -1,96 +1,123 @@
+"""Tenant staff authentication: login, logout, session validation (architecture.md §6.2).
+
+Error codes the frontend can rely on:
+- invalid_credentials: unknown email or wrong password (same message for both);
+- account_inactive / tenant_suspended: correct password, but login isn't allowed;
+- not_authenticated: no cookie or an unknown token;
+- session_expired: past the expiry (fixed at login) or logged out.
+"""
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from datetime import datetime, timezone
-from fastapi import HTTPException
 
-from app.models.user import User
-from app.models.session import UserSession
-from app.models.tenant import Tenant
-from app.core.security import hash_password, verify_password, generate_token, hash_token, get_token_expiry
+from app.core.errors import NotAuthenticated
+from app.core.principal import ANONYMOUS, Actor, Principal
+from app.core.request_context import RequestMeta
+from app.core.security import (
+    dummy_password_hash, generate_token, get_token_expiry, hash_token, normalize_email, utcnow,
+    verify_password,
+)
+from app.models import Tenant, User, UserSession
+from app.service import audit_service, permission_service
 
-def authenticate(db: Session, email: str, password: str) -> User | None:
-    user = db.query(User).filter(User.email == email).first()
+INVALID_CREDENTIALS = "Invalid email or password."
+
+
+def login(db: Session, *, email: str, password: str, meta: RequestMeta) -> tuple[str, User]:
+    """Returns (raw session token, user). Every outcome is audited and committed."""
+    email = normalize_email(email)
+    user = db.scalars(select(User).where(func.lower(User.email) == email)).first()
 
     if user is None:
-        return None
+        verify_password(password, dummy_password_hash())  # same bcrypt cost as a real check
+        _login_failed(db, meta, email, user=None, cause="unknown email")
     if not verify_password(password, user.hashed_password):
-        return None
-    if user.is_active == False:
-        raise ValueError("Account Deactivated")
+        _login_failed(db, meta, email, user=user, cause="wrong password")
+    if not user.is_active:
+        _login_failed(db, meta, email, user=user, cause="user deactivated",
+                      code="account_inactive", message="This account is deactivated.")
+    tenant = db.get(Tenant, user.tenant_id)
+    if tenant.status != "active":
+        _login_failed(db, meta, email, user=user, cause="tenant suspended",
+                      code="tenant_suspended", message="This lodge's account is suspended.")
 
-    return user
-
-def create_session(db: Session, user: User) -> str:
     raw_token = generate_token()
-    session = UserSession(
-        user_id = user.id,
-        token_hash = hash_token(raw_token),
-        expires_at = get_token_expiry()
-    )
+    session = UserSession(user_id=user.id, token_hash=hash_token(raw_token), expires_at=get_token_expiry())
     db.add(session)
-    db.commit()
-    return raw_token
-
-def signup_tenant(db: Session, tenant_name: str, admin_email: str, admin_phone: str, admin_password: str, address: str, name: str) -> User:
-    existing = db.query(User).filter(User.email == admin_email).first()
-    if existing:
-        raise ValueError("Email already registered!")
-
-    tenant = Tenant(name = tenant_name, contact_email= admin_email, contact_phone= admin_phone, address=address)
-    db.add(tenant)
     db.flush()
-
-    admin = User(
-        tenant_id = tenant.id,
-        email = admin_email,
-        name = name,
-        hashed_password = hash_password(admin_password),
-        role = "admin",
-    )
-    db.add(admin)
-    db.commit()
-    db.refresh(admin)
-    return tenant, admin
-
-def register(db: Session, email: str, password: str, role: str, name: str, acting_user: User) -> User:
-    existing = db.query(User).filter(User.email == email).first()
-    if existing:
-        raise ValueError("Email already registered!")
-
-    user = User(
-        tenant_id = acting_user.tenant_id, email = email, hashed_password= hash_password(password), role = role, name = name
-        )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
-
-def deactivate(db: Session, acting_user: User, target_user_id: int):
-    target = db.query(User).filter(User.id == target_user_id, User.tenant_id == acting_user.tenant_id).first()
-    if target is None:
-        raise HTTPException(status_code=404, detail="User not found!")
-    if target.id == acting_user.id:
-        raise  HTTPException(status_code=403, detail="Owner can't deactivate themselves!")
-
-    target.is_active = False
-
-    db.query(UserSession).filter(
-        UserSession.user_id == target.id,
-        UserSession.revoked_at.is_(None),
-    ).update(
-        {"revoked_at": datetime.now(timezone.utc)},
-        synchronize_session=False,
+    audit_service.record(
+        db, action="auth.login", actor=Actor.tenant_user(user.id), tenant_id=user.tenant_id,
+        entity_type="user", entity_id=user.id, summary=f"{user.email} logged in", meta=meta,
     )
     db.commit()
-    return target
+    return raw_token, user
 
-def logout(db: Session, token: str):
-    token_hash = hash_token(token)
-    session = db.query(UserSession).filter(
-        UserSession.token_hash == token_hash, UserSession.revoked_at.is_(None)
-        ).first()
-    if session is not None:
-        session.revoked_at = datetime.now(timezone.utc)
-        db.commit()
 
-def list_users(db: Session, acting_user: User):
-    return db.query(User).filter(User.tenant_id == acting_user.tenant_id).all()
+def _login_failed(db: Session, meta: RequestMeta, email: str, *, user: User | None, cause: str,
+                  code: str = "invalid_credentials", message: str = INVALID_CREDENTIALS) -> None:
+    # Known users: the event goes to their tenant's trail. Unknown emails have no tenant.
+    audit_service.record(
+        db, action="auth.login.failed", actor=ANONYMOUS,
+        tenant_id=user.tenant_id if user else None,
+        entity_type="user" if user else None, entity_id=user.id if user else None,
+        summary=f"Failed login for {email[:254]}: {cause}", meta=meta,
+    )
+    db.commit()  # the failure is the whole use case: save its audit row, then refuse
+    raise NotAuthenticated(message, code=code)
+
+
+def logout(db: Session, *, token: str | None, meta: RequestMeta) -> None:
+    """Revoke the session behind the cookie, if it is still live. Never fails."""
+    if not token:
+        return
+    session = db.scalars(
+        select(UserSession).where(UserSession.token_hash == hash_token(token), UserSession.revoked_at.is_(None))
+    ).first()
+    if session is None:
+        return
+    user = db.get(User, session.user_id)
+    session.revoked_at = utcnow()
+    audit_service.record(
+        db, action="auth.logout", actor=Actor.tenant_user(user.id), tenant_id=user.tenant_id,
+        entity_type="user", entity_id=user.id, summary=f"{user.email} logged out", meta=meta,
+    )
+    db.commit()
+
+
+def check_session_alive(session) -> None:
+    """Shared by tenant and platform sessions: revoked or expired -> session_expired."""
+    if session.revoked_at is not None or session.expires_at <= utcnow():
+        raise NotAuthenticated("Your session has ended. Please log in again.", code="session_expired")
+
+
+def profile(db: Session, user_id: int, permissions: frozenset[str] | None = None) -> dict:
+    """What /auth/login and /auth/me return about the logged-in user."""
+    user = db.get(User, user_id)
+    if permissions is None:
+        permissions = permission_service.effective_permissions(db, user)
+    return {
+        "id": user.id, "tenant_id": user.tenant_id, "name": user.name, "email": user.email,
+        "role_code": user.role_code, "permissions": sorted(permissions),
+    }
+
+
+def authenticate_session(db: Session, token: str | None) -> Principal:
+    """Turn a session cookie into a Principal, or raise NotAuthenticated."""
+    if not token:
+        raise NotAuthenticated("Not logged in.")
+    session = db.scalars(select(UserSession).where(UserSession.token_hash == hash_token(token))).first()
+    if session is None:
+        raise NotAuthenticated("Not logged in.")
+
+    check_session_alive(session)
+
+    user = db.get(User, session.user_id)
+    if not user.is_active:
+        raise NotAuthenticated("This account is deactivated.", code="account_inactive")
+    tenant = db.get(Tenant, user.tenant_id)
+    if tenant.status != "active":
+        raise NotAuthenticated("This lodge's account is suspended.", code="tenant_suspended")
+
+    return Principal(
+        kind="tenant", user_id=user.id, tenant_id=user.tenant_id, role_code=user.role_code,
+        permissions=permission_service.effective_permissions(db, user), session_id=session.id,
+    )
