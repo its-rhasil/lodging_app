@@ -79,8 +79,22 @@ def add_override(db, user: User, permission_code: str, effect: str) -> UserPermi
     return override
 
 
-def make_room_type(db, tenant: Tenant, capacity: int = 2, daily_price: str = "1000.00") -> RoomType:
-    """Room type with a complete daily-plan rate set (1..capacity)."""
+def make_plan(db, tenant: Tenant, name: str | None = None, period_hours: int = 2,
+              grace_minutes: int = 60, is_active: bool = True) -> StayPlan:
+    """A non-daily plan (default: the beta lodge's fresh-up, 2h + 60 min grace)."""
+    plan = StayPlan(tenant_id=tenant.id, name=name or f"Plan {next(_seq)}", period_hours=period_hours,
+                    grace_minutes=grace_minutes, is_active=is_active)
+    db.add(plan)
+    db.flush()
+    return plan
+
+
+def make_room_type(db, tenant: Tenant, capacity: int = 2, daily_price: str = "1000.00",
+                   extra_rates: dict[tuple[int, int], str] | None = None) -> RoomType:
+    """Room type with a complete daily-plan rate set (1..capacity).
+
+    extra_rates: {(stay_plan_id, occupancy): price} for other plans.
+    """
     room_type = RoomType(tenant_id=tenant.id, name=f"Type {next(_seq)}", capacity=capacity)
     db.add(room_type)
     db.flush()
@@ -89,6 +103,11 @@ def make_room_type(db, tenant: Tenant, capacity: int = 2, daily_price: str = "10
         db.add(RoomTypeRate(
             tenant_id=tenant.id, room_type_id=room_type.id, stay_plan_id=plan.id,
             occupancy=occ, price=Decimal(daily_price),
+        ))
+    for (plan_id, occ), price in (extra_rates or {}).items():
+        db.add(RoomTypeRate(
+            tenant_id=tenant.id, room_type_id=room_type.id, stay_plan_id=plan_id,
+            occupancy=occ, price=Decimal(price),
         ))
     db.flush()
     return room_type
@@ -110,14 +129,16 @@ def make_guest(db, tenant: Tenant, phone: str | None = None) -> Guest:
 
 
 def make_stay(db, tenant: Tenant, created_by: User, room: Room | None = None,
-              check_in_at: datetime | None = None, with_folio: bool = True) -> Stay:
-    """Bare stay row on the daily plan (no posting). Day 2 check-in tests use the service instead."""
+              check_in_at: datetime | None = None, with_folio: bool = True,
+              plan: StayPlan | None = None) -> Stay:
+    """Bare stay row (no posting), on the daily plan unless `plan` is given."""
     room = room or make_room(db, tenant)
-    plan = daily_plan(db, tenant)
+    plan = plan or daily_plan(db, tenant)
     stay = Stay(
         tenant_id=tenant.id, room_id=room.id, guest_id=make_guest(db, tenant).id,
         stay_plan_id=plan.id, actual_check_in_at=check_in_at or datetime(2026, 11, 1, 12, tzinfo=timezone.utc),
-        agreed_price=Decimal("1000.00"), occupancy=1, period_hours=plan.period_hours,
+        agreed_price=Decimal("1000.00"), listed_price=Decimal("1000.00"), occupancy=1,
+        period_hours=plan.period_hours,
         grace_minutes=plan.grace_minutes, created_by_user_id=created_by.id,
     )
     db.add(stay)

@@ -49,8 +49,8 @@ def test_stay_cannot_reference_another_tenants_room(db):
     plan_a = daily_plan(db, a)
     db.add(Stay(
         tenant_id=a.id, room_id=room_b.id, guest_id=make_guest(db, a).id, stay_plan_id=plan_a.id,
-        actual_check_in_at=datetime(2026, 11, 1, 12, tzinfo=timezone.utc), agreed_price=Decimal("1000"), occupancy=1,
-        period_hours=24, grace_minutes=30, created_by_user_id=user_a.id,
+        actual_check_in_at=datetime(2026, 11, 1, 12, tzinfo=timezone.utc), agreed_price=Decimal("1000"),
+        listed_price=Decimal("1000"), occupancy=1, period_hours=24, grace_minutes=30, created_by_user_id=user_a.id,
     ))
     with pytest.raises(IntegrityError) as exc:
         db.flush()

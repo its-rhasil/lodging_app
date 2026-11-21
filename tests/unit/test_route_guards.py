@@ -14,6 +14,7 @@ from app.main import ROUTERS, app
 # No login needed.
 PUBLIC = {
     ("GET", "/health"),
+    ("HEAD", "/health"),  # uptime monitors
     ("POST", "/auth/login"),
     ("POST", "/auth/logout"),
     ("POST", "/platform/auth/login"),

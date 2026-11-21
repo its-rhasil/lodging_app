@@ -7,6 +7,8 @@ How isolation works:
   db.commit() only releases a savepoint. The outer transaction is rolled back
   after the test: nothing a test writes survives it.
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from sqlalchemy import create_engine, insert
 from sqlalchemy.orm import Session
@@ -65,10 +67,32 @@ def db(engine):
         connection.close()
 
 
+class FakeClock:
+    """Stands in for app.core.clock.get_now in tests. Always timezone-aware (UTC)."""
+
+    def __init__(self, now: datetime):
+        self.current = now
+
+    def now(self) -> datetime:
+        return self.current
+
+    def set(self, value: datetime) -> None:
+        self.current = value
+
+    def advance(self, **delta) -> None:
+        self.current += timedelta(**delta)
+
+
 @pytest.fixture
-def client(db):
+def fake_clock():
+    return FakeClock(datetime(2026, 11, 16, 8, 0, tzinfo=timezone.utc))
+
+
+@pytest.fixture
+def client(db, fake_clock):
     # Imported lazily so unit tests don't depend on every route module importing cleanly.
     from fastapi.testclient import TestClient
+    from app.core.clock import get_now
     from app.main import app
 
     def _override_get_db():
@@ -82,6 +106,7 @@ def client(db):
             raise
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_now] = fake_clock.now
     # https base URL: the session cookie is Secure, so the client only sends it over https.
     with TestClient(app, base_url="https://testserver") as c:
         yield c
