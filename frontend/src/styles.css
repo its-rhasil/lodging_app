@@ -1,0 +1,291 @@
+/* Two themes (owner, 2026-11-18). Every colour is a variable; the theme switch sets
+   data-theme="light" | "dark" on <html> (see theme.ts). */
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4efe6;            /* light beige */
+  --card: #ffffff;          /* room cards and panels: white */
+  --raised: #fbf8f3;        /* table headers, hover */
+  --text: #2a2622;
+  --muted: #665e53;         /* 6.4:1 on a white card, 5.6:1 on the beige page (was 4.7 / 4.1) */
+  --line: #e6dfd3;
+  --primary: #1f4e79;
+  --primary-text: #ffffff;
+  --primary-soft: #e3ecf5;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+  --danger-line: #f5c2bd;
+  --notice-soft: #e9f2fb;
+  --notice-line: #bcd6f0;
+  --available: #1a7f55;
+  --occupied: #1f4e79;
+  --cleaning: #b25e09;
+  --maintenance: #6b6560;
+  --owes: #b42318;
+  --credit: #1a7f55;
+  --input-bg: #ffffff;
+  /* Room-card secondary buttons: a very faint tint, a visible 1px border, dark text. */
+  --clean-bg: color-mix(in srgb, var(--cleaning) 8%, var(--card));
+  --clean-bg-hover: color-mix(in srgb, var(--cleaning) 16%, var(--card));
+  --clean-bg-active: color-mix(in srgb, var(--cleaning) 24%, var(--card));
+  --clean-border: color-mix(in srgb, var(--cleaning) 80%, var(--card));
+  --clean-text: color-mix(in srgb, var(--cleaning) 60%, #000);
+  --block-bg: color-mix(in srgb, var(--maintenance) 8%, var(--card));
+  --block-bg-hover: color-mix(in srgb, var(--maintenance) 16%, var(--card));
+  --block-bg-active: color-mix(in srgb, var(--maintenance) 24%, var(--card));
+  --block-border: color-mix(in srgb, var(--maintenance) 75%, var(--card));
+  --block-text: color-mix(in srgb, var(--maintenance) 60%, #000);
+  --shadow: 0 1px 2px rgba(60, 45, 20, 0.06), 0 2px 8px rgba(60, 45, 20, 0.05);
+  --shadow-pop: 0 12px 32px rgba(40, 30, 10, 0.18);
+  --backdrop: rgba(30, 24, 16, 0.45);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1116;            /* near-black slate */
+  --card: #171b22;
+  --raised: #1d222b;
+  --text: #e7e9ee;
+  --muted: #8e96a3;
+  --line: #2a303b;
+  --primary: #7c8cff;       /* bright indigo accent */
+  --primary-text: #0e1116;
+  --primary-soft: #232945;
+  --danger: #ff6b5e;
+  --danger-soft: #2c1714;
+  --danger-line: #5b2621;
+  --notice-soft: #182235;
+  --notice-line: #2c3f60;
+  --available: #3ecf8e;
+  --occupied: #7c8cff;
+  --cleaning: #f2a03d;
+  --maintenance: #8e96a3;
+  --owes: #ff6b5e;
+  --credit: #3ecf8e;
+  --input-bg: #11151b;
+  /* Room-card secondary buttons in dark mode: a faint dark tint (not a light fill), lighter text. */
+  --clean-bg: color-mix(in srgb, var(--cleaning) 12%, var(--card));
+  --clean-bg-hover: color-mix(in srgb, var(--cleaning) 20%, var(--card));
+  --clean-bg-active: color-mix(in srgb, var(--cleaning) 28%, var(--card));
+  --clean-border: color-mix(in srgb, var(--cleaning) 70%, var(--card));
+  --clean-text: color-mix(in srgb, var(--cleaning) 70%, #fff);
+  --block-bg: color-mix(in srgb, var(--maintenance) 12%, var(--card));
+  --block-bg-hover: color-mix(in srgb, var(--maintenance) 20%, var(--card));
+  --block-bg-active: color-mix(in srgb, var(--maintenance) 28%, var(--card));
+  --block-border: color-mix(in srgb, var(--maintenance) 66%, var(--card));
+  --block-text: color-mix(in srgb, var(--maintenance) 60%, #fff);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --backdrop: rgba(0, 0, 0, 0.6);
+}
+
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); transition: background 0.2s, color 0.2s; }
+h1, h2, h3 { margin: 0 0 8px; }
+h1 { font-size: 22px; }
+h2 { font-size: 18px; }
+h3 { font-size: 16px; }
+a { color: var(--primary); }
+
+.app main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.app main.wide { max-width: none; padding: 16px 24px; } /* Rooms page only */
+.pad { padding: 16px; }
+.muted { color: var(--muted); font-size: 14px; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.row.end { justify-content: flex-end; }
+.row.between { justify-content: space-between; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+
+.topbar {
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+  background: var(--card); border-bottom: 1px solid var(--line); padding: 8px 16px;
+  position: sticky; top: 0; z-index: 5; box-shadow: var(--shadow);
+}
+.topbar nav a { text-decoration: none; padding: 8px 10px; border-radius: 6px; color: var(--text); }
+.topbar nav a.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+
+.menu { position: relative; }
+.menu-toggle { color: var(--text); padding: 8px 10px; }
+.menu-items {
+  position: absolute; background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  display: flex; flex-direction: column; min-width: 200px; padding: 6px; box-shadow: var(--shadow-pop); z-index: 10;
+}
+.menu-items a { padding: 8px 10px; text-decoration: none; color: var(--text); border-radius: 6px; }
+.menu-items a:hover { background: var(--raised); }
+
+.offline-banner { background: var(--danger); color: #fff; padding: 8px 16px; text-align: center; font-weight: 600; }
+
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; box-shadow: var(--shadow); }
+
+button {
+  font: inherit; border-radius: 8px; border: 1px solid var(--line); padding: 8px 14px;
+  background: var(--card); color: var(--text); cursor: pointer; min-height: 40px;
+}
+button:hover:not(:disabled) { filter: brightness(1.05); }
+button.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
+button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+button.secondary { background: var(--card); }
+button.small { min-height: 32px; padding: 4px 10px; font-size: 14px; }
+button.link { border: none; background: none; color: var(--primary); padding: 4px; min-height: auto; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+input, select, textarea {
+  font: inherit; color: var(--text); padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--input-bg); min-height: 40px;
+}
+input:focus, select:focus, textarea:focus, button:focus-visible {
+  outline: 2px solid var(--primary); outline-offset: 1px;
+}
+input[readonly] { background: var(--raised); }
+label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+label.check input { min-height: auto; }
+
+.error { background: var(--danger-soft); color: var(--danger); border: 1px solid var(--danger-line); padding: 8px 12px; border-radius: 8px; }
+.notice { background: var(--notice-soft); border: 1px solid var(--notice-line); padding: 8px 12px; border-radius: 8px; }
+
+table { width: 100%; border-collapse: collapse; background: var(--card); }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
+th { color: var(--muted); font-weight: 600; background: var(--raised); }
+td.num, th.num { text-align: right; white-space: nowrap; }
+tr.reversed td { color: var(--muted); text-decoration: line-through; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+
+/* Room grid */
+.summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.pill {
+  padding: 6px 12px; border-radius: 999px; background: var(--card); border: 1px solid var(--line);
+  font-size: 14px; min-height: 32px; text-decoration: none; color: var(--text);
+}
+button.pill { cursor: pointer; }
+.pill-active { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
+.pill.available:not(.pill-active) { color: var(--available); }
+.pill.occupied:not(.pill-active) { color: var(--occupied); }
+.pill.cleaning:not(.pill-active) { color: var(--cleaning); }
+.pill.maintenance:not(.pill-active) { color: var(--maintenance); }
+
+/* Room grid (owner, 2026-11-18): cards are at least 200px wide (measured: the narrowest that
+   still shows the check-in time next to a 5-digit balance in full), 8px apart, as many per row
+   as fit. The spare space left at the end of a row is shared between the cards, so rows are
+   filled edge to edge with no gap on the right. */
+.rooms {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px; align-items: stretch;
+}
+
+/* Group headings above the room grids (Group by room type / floor): the title is centred
+   with a line on each side: ──────── Floor 2 ──────── */
+.room-group + .room-group { margin-top: 16px; }
+.group-head {
+  display: flex; align-items: center; gap: 14px; margin: 0 0 10px;
+  font-size: 14px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+}
+.group-head::before, .group-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* Room card (owner, 2026-11-18). Fixed height, so every card is the same size.
+   - top: room number | status badge; below it the room type, full width, WRAPPING (never cut off);
+   - occupied: guest + plan in the centre, check-in time | balance at the bottom;
+   - otherwise: one full-width main button, then one row of smaller equal-width tinted buttons.
+   Budget: 8+8 padding, 2 border, 22 top, up to 3 lines of room type (45), 58 buttons, 2x4 gaps
+   = 143 (+ spare) in 152. Short names leave the spare space blank; nothing ever scrolls. */
+.room {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px;
+  display: flex; flex-direction: column; gap: 4px; height: 152px; min-width: 0;
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.room.clickable { cursor: pointer; }
+.room.clickable:hover { border-color: var(--primary); }
+.room-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 22px; }
+.room .number { font-size: 17px; font-weight: 700; line-height: 1.2; }
+.room .badge { font-size: 10px; padding: 2px 8px; }
+.room-type { font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+.room-body { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; }
+.room-guest {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 2px;
+}
+/* The guest name wraps onto a second line (cut with "..." only beyond two lines). */
+.room-guest .guest {
+  font-size: 16px; line-height: 1.2; max-width: 100%; overflow-wrap: anywhere; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.room-guest .muted { font-size: 14px; max-width: 100%; }
+.room-bottom { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; }
+.room-bottom .muted { font-size: 13px; }
+
+.room-actions { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+/* Check in / Ready: centred, only as wide as its label (owner, 2026-11-18). */
+.room-primary { align-self: center; width: auto; min-width: 96px; min-height: 30px; padding: 4px 26px; font-size: 13px; }
+/* Cleaning / Block: each button is always half the row (minus half the gap) and keeps its place:
+   Cleaning on the left, Block on the right. A lone button in a cleaning or blocked room therefore
+   stays exactly where it is in an available room (it neither stretches nor moves). */
+.secondary-pair { align-self: stretch; display: flex; justify-content: flex-start; gap: 6px; }
+.card-error {
+  font-size: 11px; color: var(--danger); overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+
+/* Secondary buttons (Cleaning amber, Block grey): faint tint + visible 1px border + dark text
+   (light mode) / lighter text on a dark tint (dark mode). Never red, green or indigo. The border
+   keeps them looking like buttons without hover (touch screens); :active gives a pressed state. */
+.secondary-btn {
+  flex: 0 0 calc(50% - 3px); min-width: 0; min-height: 24px; padding: 2px 6px; font-size: 12px; border-radius: 6px;
+  border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--btn-text);
+}
+.secondary-btn:hover:not(:disabled) { filter: none; background: var(--btn-bg-hover); }
+.secondary-btn:active:not(:disabled) { background: var(--btn-bg-active); }
+.secondary-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.btn-clean {
+  --btn-bg: var(--clean-bg); --btn-bg-hover: var(--clean-bg-hover); --btn-bg-active: var(--clean-bg-active);
+  --btn-border: var(--clean-border); --btn-text: var(--clean-text);
+}
+.btn-block {
+  margin-left: auto;   /* always the right half, even when Cleaning isn't shown */
+  --btn-bg: var(--block-bg); --btn-bg-hover: var(--block-bg-hover); --btn-bg-active: var(--block-bg-active);
+  --btn-border: var(--block-border); --btn-text: var(--block-text);
+}
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Status badge: the colour surrounds the status word. */
+.badge {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+  padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor;
+}
+.badge.available { color: var(--available); background: color-mix(in srgb, var(--available) 12%, transparent); }
+.badge.occupied { color: var(--occupied); background: color-mix(in srgb, var(--occupied) 12%, transparent); }
+.badge.cleaning { color: var(--cleaning); background: color-mix(in srgb, var(--cleaning) 12%, transparent); }
+.badge.maintenance { color: var(--maintenance); background: color-mix(in srgb, var(--maintenance) 12%, transparent); }
+
+.owes { color: var(--owes); font-weight: 700; }
+.credit { color: var(--credit); font-weight: 700; }
+.settled { color: var(--muted); }
+.big-balance { font-size: 28px; }
+
+.offers { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.offer { text-align: left; padding: 12px; border: 2px solid var(--line); background: var(--card); }
+.offer.selected { border-color: var(--primary); background: var(--primary-soft); }
+
+.modal-backdrop { position: fixed; inset: 0; background: var(--backdrop); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
+.modal { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; width: 100%; max-width: 460px; max-height: 90vh; overflow: auto; box-shadow: var(--shadow-pop); }
+.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+
+.center-screen { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 16px; text-align: center; }
+.spinner { width: 36px; height: 36px; border: 4px solid var(--line); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.login { max-width: 360px; width: 100%; }
+
+.theme-toggle { min-height: 32px; padding: 4px 10px; font-size: 14px; }
+
+@media (max-width: 600px) {
+  .app main { padding: 12px; }
+  .app main.wide { padding: 12px 16px; }
+}
