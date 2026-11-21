@@ -29,6 +29,9 @@ class Stay(Base):
         CheckConstraint("status IN ('active', 'checked_out', 'cancelled')", name="ck_stay_status"),
         CheckConstraint("occupancy > 0", name="ck_stay_occupancy"),
         CheckConstraint("agreed_price > 0", name="ck_stay_price"),
+        CheckConstraint("listed_price > 0", name="ck_stay_listed_price"),
+        # Discounts only: the agreed price never exceeds the rate-table price (owner, 2026-11-16).
+        CheckConstraint("agreed_price <= listed_price", name="ck_stay_price_le_listed"),
         CheckConstraint(
             "actual_checkout_at IS NULL OR actual_checkout_at >= actual_check_in_at",
             name="ck_stay_dates",
@@ -51,7 +54,9 @@ class Stay(Base):
     actual_check_in_at = Column(DateTime(timezone=True), nullable=False)
     expected_checkout_at = Column(DateTime(timezone=True))
     actual_checkout_at = Column(DateTime(timezone=True))
-    agreed_price = Column(Numeric(10, 2), nullable=False)  # current rate per period
+    agreed_price = Column(Numeric(10, 2), nullable=False)  # current rate per period (after discount)
+    # Rate-table price per period at check-in, kept so the discount % stays right after rates change.
+    listed_price = Column(Numeric(10, 2), nullable=False)
     occupancy = Column(Integer, nullable=False)
     # Plan snapshot copied at check-in (and on conversion): editing the plan never rebills a stay.
     period_hours = Column(Integer, nullable=False)
