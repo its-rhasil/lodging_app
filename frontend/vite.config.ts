@@ -11,8 +11,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["icon.svg"],
       manifest: {
-        name: "Lodge Front Desk",
-        short_name: "Front Desk",
+        name: "FrontdeskInn",
+        short_name: "FrontDesk",
         description: "Rooms, check-ins and bills for the front desk",
         theme_color: "#1f4e79",
         background_color: "#f5f6f8",

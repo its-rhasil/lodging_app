@@ -26,7 +26,7 @@ export function LoginPage() {
     <div className="center-screen">
       <form className="card stack login" onSubmit={submit}>
         <div className="row between">
-          <h1>Front Desk</h1>
+          <h1>FrontdeskInn</h1>
           <ThemeToggle />
         </div>
         <label>
