@@ -6,7 +6,7 @@ from app.core.deps import require_permission
 from app.core.principal import Principal
 from app.core.request_context import RequestMeta, get_request_meta
 from app.database import get_db
-from app.schemas.users import OverridesUpdate, UserCreate, UserDetail, UserOut
+from app.schemas.users import OverridesUpdate, PermissionInfo, UserCreate, UserDetail, UserOut
 from app.service import user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -24,6 +24,12 @@ def create_user(payload: UserCreate, principal: Principal = Depends(can_manage_u
     return user_service.create_user(db, principal, meta=meta, **payload.model_dump())
 
 
+# Fixed path before /{user_id}, so it isn't read as an id.
+@router.get("/permission-catalogue", response_model=list[PermissionInfo])
+def permission_catalogue(principal: Principal = Depends(can_manage_users)):
+    return user_service.permission_catalogue()
+
+
 @router.get("/{user_id}", response_model=UserDetail)
 def get_user(user_id: int, principal: Principal = Depends(can_manage_users), db: Session = Depends(get_db)):
     return user_service.get_user_detail(db, principal, user_id)
@@ -33,6 +39,12 @@ def get_user(user_id: int, principal: Principal = Depends(can_manage_users), db:
 def deactivate_user(user_id: int, principal: Principal = Depends(can_manage_users),
                     db: Session = Depends(get_db), meta: RequestMeta = Depends(get_request_meta)):
     return user_service.deactivate_user(db, principal, user_id, meta=meta)
+
+
+@router.post("/{user_id}/reactivate", response_model=UserOut)
+def reactivate_user(user_id: int, principal: Principal = Depends(can_manage_users),
+                    db: Session = Depends(get_db), meta: RequestMeta = Depends(get_request_meta)):
+    return user_service.reactivate_user(db, principal, user_id, meta=meta)
 
 
 @router.put("/{user_id}/overrides", response_model=UserDetail)

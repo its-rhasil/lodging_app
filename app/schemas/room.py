@@ -1,51 +1,36 @@
-from pydantic import BaseModel
 from datetime import datetime
+from typing import Literal
 
-from app.schemas.payment import BillingSummary
+from pydantic import BaseModel, Field
+
+# What staff can set. 'occupied' is never set by hand: it comes from an active stay (DL-E04).
+OperationalStatus = Literal["available", "cleaning", "maintenance"]
+EffectiveStatus = Literal["available", "cleaning", "maintenance", "occupied"]
 
 
 class RoomCreate(BaseModel):
     room_type_id: int
-    room_number: int
+    room_number: str = Field(min_length=1, max_length=20)  # string: '101', 'A-12' (D-27)
+
+
+class RoomUpdate(BaseModel):
+    """Only the fields sent are changed."""
+    room_type_id: int | None = None
+    room_number: str | None = Field(default=None, min_length=1, max_length=20)
+    is_active: bool | None = None
+
+
+class RoomStatusUpdate(BaseModel):
+    operational_status: OperationalStatus
+
 
 class RoomOut(BaseModel):
     id: int
     room_number: str
     room_type_id: int
-    operational_status: str
-
-    model_config = {"from_attributes": True}
-
-class RoomResponse(BaseModel):
-    id: int
-    room_number: str
-    room_type_id: int
-    operational_status: str
-
-    model_config = {"from_attributes": True}
-
-# app/schemas/room.py
-class GuestOut(BaseModel):
-    full_name: str
-    phone: str
-    email: str | None
-    address: str | None
-
-    model_config = {"from_attributes": True}
-
-
-class RoomDetail(BaseModel):
-    room_id: int
-    stay_id: int | None
-    room_number: str
     room_type_name: str
-    status: str
-    guest: GuestOut | None = None
-    actual_check_in_at: datetime | None = None
-    expected_checkout_at: datetime | None = None
-    billing: BillingSummary | None = None
-
-
-
-class RoomStatusUpdate(BaseModel):
-    operational_status: str
+    operational_status: OperationalStatus
+    status: EffectiveStatus          # 'occupied' if there's an active stay, else operational_status
+    active_stay_id: int | None
+    is_active: bool
+    created_at: datetime

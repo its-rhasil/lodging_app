@@ -46,6 +46,12 @@ class OverrideOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PermissionInfo(BaseModel):
+    code: str
+    description: str
+    roles: list[str]  # roles that hold it by default
+
+
 class UserDetail(UserOut):
     overrides: list[OverrideOut]
     permissions: list[str]  # effective set

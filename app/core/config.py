@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     cookie_secure: bool = True
     cookie_samesite: Literal["lax", "strict"] = "lax"
 
+    # Production: the PWA's origin, e.g. https://app.<domain> (architecture.md §6.2). CORS allows
+    # exactly this origin, with credentials. Unset in development: Vite proxies /api (same origin).
+    frontend_origin: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

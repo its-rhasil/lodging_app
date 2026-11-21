@@ -1,14 +1,20 @@
+"""Room grid. Loading it posts due room charges for the guests shown (DL-R21)."""
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_current_user
+from app.core.clock import get_now
+from app.core.deps import require_permission
+from app.core.principal import Principal
 from app.database import get_db
-from app.service.dashboard import build_dashboard
-from app.models.user import User
-from app.schemas.dashboard import DashboardResponse
+from app.schemas.dashboard import DashboardOut
+from app.service import dashboard
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-@router.get("/",response_model=DashboardResponse)
-def read_dashboard(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return build_dashboard(db=db, tenant_id=current_user.tenant_id)
+
+@router.get("", response_model=DashboardOut)
+def read_dashboard(principal: Principal = Depends(require_permission("dashboard.view")),
+                   db: Session = Depends(get_db), now: datetime = Depends(get_now)):
+    return dashboard.build_dashboard(db, principal, now=now)

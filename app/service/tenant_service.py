@@ -1,4 +1,5 @@
 """Tenant onboarding (DL-R03). Beta: called by the create-tenant CLI only; no public signup."""
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.principal import SYSTEM, Actor
@@ -51,3 +52,38 @@ def create_tenant(db: Session, *, name: str, contact_email: str, contact_phone: 
     )
     db.commit()
     return tenant, admin
+
+
+# --- tenant settings (Day 3) ----------------------------------------------------------
+
+def get_settings(db: Session, tenant_id: int) -> TenantSettings:
+    return db.get(TenantSettings, tenant_id)
+
+
+def update_settings(db: Session, principal, fields: dict, *, meta) -> TenantSettings:
+    """Timezone, currency, backdate window. Only the fields sent are changed."""
+    settings = db.scalars(
+        select(TenantSettings).where(TenantSettings.tenant_id == principal.tenant_id).with_for_update()
+    ).one()
+    fields = {k: v for k, v in fields.items() if v is not None}
+    if "currency" in fields:
+        fields["currency"] = fields["currency"].upper()
+    if "timezone" in fields:
+        # PostgreSQL's own list: no timezone package needed in Python.
+        known = db.scalar(text("SELECT count(*) FROM pg_timezone_names WHERE name = :tz"),
+                          {"tz": fields["timezone"]})
+        if not known:
+            raise ValidationFailed("Unknown timezone.", code="unknown_timezone")
+
+    changes = {k: [getattr(settings, k), v] for k, v in fields.items() if getattr(settings, k) != v}
+    if not changes:
+        return settings
+    for key, (_, new) in changes.items():
+        setattr(settings, key, new)
+    audit_service.record(
+        db, action="settings.updated", actor=principal.actor, tenant_id=principal.tenant_id,
+        entity_type="tenant_settings", entity_id=principal.tenant_id, summary="Updated tenant settings",
+        changes=changes, meta=meta,
+    )
+    db.commit()
+    return settings

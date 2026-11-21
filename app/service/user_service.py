@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFound, PermissionDenied, ValidationFailed
+from app.core.permissions import PERMISSIONS, ROLE_PERMISSIONS
 from app.core.principal import Principal
 from app.core.request_context import RequestMeta
 from app.core.security import hash_password, normalize_email, utcnow, validate_new_password
@@ -95,6 +96,30 @@ def deactivate_user(db: Session, principal: Principal, user_id: int, *, meta: Re
     )
     db.commit()
     return user
+
+
+def reactivate_user(db: Session, principal: Principal, user_id: int, *, meta: RequestMeta) -> User:
+    """Undo a deactivation. They log in again with their old password."""
+    user = _get_user(db, principal, user_id, lock=True)
+    if user.is_active:
+        return user  # nothing to do; nothing to audit
+    user.is_active = True
+    audit_service.record(
+        db, action="user.reactivated", actor=principal.actor, tenant_id=principal.tenant_id,
+        entity_type="user", entity_id=user.id, summary=f"Reactivated {user.email}",
+        changes={"is_active": [False, True]}, meta=meta,
+    )
+    db.commit()
+    return user
+
+
+def permission_catalogue() -> list[dict]:
+    """Every permission with the roles that hold it by default (for the overrides screen)."""
+    return [
+        {"code": code, "description": description,
+         "roles": sorted(role for role, perms in ROLE_PERMISSIONS.items() if code in perms)}
+        for code, description in PERMISSIONS.items()
+    ]
 
 
 def set_overrides(db: Session, principal: Principal, user_id: int, overrides: list[dict], *,

@@ -1,19 +1,29 @@
-from pydantic import BaseModel
 from datetime import datetime
 from decimal import Decimal
+
+from pydantic import BaseModel
+
+
+class StayCard(BaseModel):
+    """The guest in an occupied room."""
+    stay_id: int
+    guest_name: str
+    guest_phone: str
+    stay_plan_name: str
+    actual_check_in_at: datetime
+    expected_checkout_at: datetime | None
+    agreed_price: Decimal
+    balance: Decimal  # > 0 the guest owes; < 0 the guest is in credit
+    next_charge_at: datetime  # when the next period posts (stay's own period + grace)
 
 
 class RoomCard(BaseModel):
     room_id: int
     room_number: str
     room_type_name: str
-    status: str
-    guest_name: str | None = None
-    nightly_rate: Decimal | None = None       # occupied rooms: the agreed rate
-    min_price: Decimal | None = None          # available rooms: cheapest occupancy tier
-    max_price: Decimal | None = None          # available rooms: priciest occupancy tier
+    status: str  # available | cleaning | maintenance | occupied
+    stay: StayCard | None
 
-    model_config = {"from_attributes": True}
 
 class DashboardSummary(BaseModel):
     total_rooms: int
@@ -21,9 +31,10 @@ class DashboardSummary(BaseModel):
     occupied: int
     cleaning: int
     maintenance: int
-    reserved: int  # placeholder, always 0 for now
+    pending_balances_count: int   # checked-out guests who still owe
+    pending_balances_total: Decimal
 
 
-class DashboardResponse(BaseModel):
+class DashboardOut(BaseModel):
     summary: DashboardSummary
     rooms: list[RoomCard]
