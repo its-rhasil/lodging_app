@@ -2,12 +2,17 @@ from sqlalchemy import MetaData, create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.core.config import settings
 
-engine = create_engine(settings.database_url, echo=settings.db_echo)
+engine = create_engine(
+    settings.database_url,
+    echo=settings.db_echo,
+    pool_pre_ping=True,  # replace connections the pooler closed while idle
+    pool_size=5,
+    max_overflow=5,
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Stable names for constraints/indexes not named explicitly in the models.
-# CHECK constraints are always named by hand (ck_...), so "ck" is left out on purpose.
+
 NAMING_CONVENTION = {
     "pk": "pk_%(table_name)s",
     "ix": "ix_%(column_0_label)s",

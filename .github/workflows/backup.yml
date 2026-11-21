@@ -1,0 +1,132 @@
+# Daily database backup: Supabase -> pg_dump -> check -> encrypt -> GitHub artifact (30 days).
+
+# ---- How this works ----
+# WHAT THIS FILE IS
+#   A GitHub Actions "workflow". GitHub reads every file in .github/workflows/ on the default
+#   branch (main) and runs it on its own temporary Linux machine. Nothing runs on Render or
+#   Supabase, and nothing runs between backups: the machine exists for ~1-2 minutes, then
+#   GitHub deletes it. Free: public repos have no minute limit; private repos get ~2,000
+#   free minutes/month and this uses ~30-60.
+#
+# WHEN IT RUNS ("on:")
+#   - schedule: cron "30 20 * * *" = every day at 20:30 UTC = 02:00 India time (quiet hours).
+#     Cron times on GitHub are always UTC. GitHub may start it a few minutes late when busy.
+#   - workflow_dispatch: adds a "Run workflow" button (Actions tab) for a backup right now,
+#     e.g. before a migration.
+#
+# SAFETY SETTINGS
+#   - permissions: contents: read -> the job's GitHub token can only read the repo, nothing else.
+#   - concurrency -> never two backups at the same time (a manual run waits for the nightly one).
+#   - timeout-minutes: 15 -> a stuck connection can't burn minutes for hours.
+#   - shell: bash -> GitHub then runs each step with "-e -o pipefail": any failing command
+#     stops the job and marks it red, and GitHub emails you. A half-made backup is never kept.
+#
+# THE TWO SECRETS (Settings -> Secrets and variables -> Actions; encrypted by GitHub,
+# shown as *** in logs, never in this file):
+#   - BACKUP_DATABASE_URL: Supabase's SESSION pooler address (port 5432), with the password.
+#   - BACKUP_PASSPHRASE: a long random passphrase. Keep a copy OUTSIDE GitHub (a password
+#     manager): without it the backups can't be opened, and GitHub can't recover it.
+#
+# THE STEPS
+#   1. Install the PostgreSQL client tools, version PG_MAJOR. pg_dump must be the same major
+#      version as the server or newer, and the machine's built-in one may be older. PG_MAJOR
+#      must match Supabase (Dashboard -> Settings -> Infrastructure shows the version).
+#      The official PostgreSQL apt repository (apt.postgresql.org) provides every version.
+#   2. pg_dump: copy the database into one file.
+#      --schema=public    only OUR tables/functions/triggers (Alembic creates them in "public").
+#                         Supabase's own internal schemas (auth, storage, ...) are skipped:
+#                         we don't use them, and they can't be restored elsewhere anyway.
+#      --format=custom    pg_dump's compressed format; pg_restore can restore all or part of it.
+#      --no-owner --no-privileges   don't record Supabase's role names, so the file restores
+#                         into any PostgreSQL (your PC for the drill, or a new Supabase project).
+#      pg_dump only reads, inside one snapshot: the lodge keeps working during the backup and
+#      the copy is consistent (no half-finished check-in).
+#   3. Check: "pg_restore --list" reads the file's table of contents. If the file is broken
+#      this fails; then we also require the key tables to be inside. This catches "the backup
+#      ran but saved nothing useful" before we trust it.
+#   4. Encrypt with gpg (AES-256) using the passphrase. The passphrase is fed through standard
+#      input (printf ... | gpg --passphrase-fd 0), not on the command line, so it never shows
+#      in the machine's process list. The unencrypted dump is then deleted.
+#      Why encrypt: the file holds guest names and phone numbers. On a public repository any
+#      GitHub user can download artifacts; on a private one, anyone with repo access can.
+#   5. Upload the encrypted file as an "artifact" named with the date and time, kept 30 days,
+#      so there are always ~30 daily copies. compression-level 0: it's already compressed and
+#      encrypted, zipping again only wastes time.
+#
+# RESTORE (written out in docs/deploy-runbook.md): Actions tab -> a run -> download the
+# artifact -> gpg --decrypt -> pg_restore into a database.
+# ---- end ----
+
+name: Database backup
+
+on:
+  schedule:
+    - cron: "30 20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  PG_MAJOR: "17"
+
+jobs:
+  backup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install PostgreSQL client tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -q "postgresql-client-${PG_MAJOR}"
+          echo "/usr/lib/postgresql/${PG_MAJOR}/bin" >> "$GITHUB_PATH"
+
+      - name: Dump the database
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          pg_dump --version
+          STAMP="$(date -u +%Y-%m-%dT%H%MZ)"
+          echo "STAMP=${STAMP}" >> "$GITHUB_ENV"
+          pg_dump --dbname="${BACKUP_DATABASE_URL}" --schema=public \
+            --format=custom --no-owner --no-privileges \
+            --file="lodge-db-${STAMP}.dump"
+          ls -l "lodge-db-${STAMP}.dump"
+
+      - name: Check the dump is readable and complete
+        run: |
+          pg_restore --list "lodge-db-${STAMP}.dump" > contents.txt
+          for table in alembic_version tenants users rooms stays folios folio_transactions audit_events; do
+            grep -q "TABLE DATA public ${table} " contents.txt || { echo "Missing table data: ${table}"; exit 1; }
+          done
+          echo "Dump contains $(grep -c 'TABLE DATA' contents.txt) tables with data."
+
+      - name: Encrypt
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          test -n "${BACKUP_PASSPHRASE}" || { echo "BACKUP_PASSPHRASE secret is not set"; exit 1; }
+          printf '%s' "${BACKUP_PASSPHRASE}" | gpg --batch --yes --pinentry-mode loopback \
+            --passphrase-fd 0 --symmetric --cipher-algo AES256 \
+            --output "lodge-db-${STAMP}.dump.gpg" "lodge-db-${STAMP}.dump"
+          rm "lodge-db-${STAMP}.dump" contents.txt
+          ls -l "lodge-db-${STAMP}.dump.gpg"
+
+      - name: Keep the encrypted backup for 30 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: lodge-db-${{ env.STAMP }}
+          path: lodge-db-${{ env.STAMP }}.dump.gpg
+          retention-days: 30
+          compression-level: 0
+          if-no-files-found: error
