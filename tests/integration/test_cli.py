@@ -1,9 +1,10 @@
-"""create-superadmin and create-tenant (P1-1, P3-1)."""
+"""create-superadmin, create-tenant (P1-1, P3-1) and reset-password (Day 5)."""
 import pytest
 
 from app.cli import main
 from app.models import AuditEvent, PlatformUser, StayPlan, Tenant, TenantSettings, User
 from app.core.security import verify_password
+from tests.factories import make_tenant, make_user
 
 TENANT_ARGS = [
     "create-tenant", "--name", "Sea View Lodge", "--contact-email", "desk@seaview.in",
@@ -88,3 +89,76 @@ def test_invalid_email_is_rejected(db, capsys, bad):
     args[args.index(bad) + 1] = "not-an-email"
     assert main(args, db=db, environ={"TENANT_ADMIN_PASSWORD": "longenough1"}, getpass=_no_prompt) == 1
     assert "Invalid email" in capsys.readouterr().err
+
+
+# --- reset-password -------------------------------------------------------------------------
+
+RESET = ["reset-password", "--email", "DESK@HillView.in"]  # mixed case: matched case-insensitively
+NEW = {"NEW_PASSWORD": "newpassword1"}
+
+
+@pytest.fixture
+def desk_user(db):
+    user = make_user(db, make_tenant(db, name="Hill View Lodge"), role_code="receptionist",
+                     email="desk@hillview.in", password="oldpassword1")
+    db.commit()  # so a failing command's rollback can't undo the setup
+    return user
+
+
+def _login(client, password):
+    return client.post("/auth/login", json={"email": "desk@hillview.in", "password": password})
+
+
+def test_reset_password_sets_the_new_password_and_ends_sessions(db, client, capsys, desk_user):
+    assert _login(client, "oldpassword1").status_code == 200  # a live session on this client
+
+    assert main(RESET, db=db, environ=NEW, getpass=_no_prompt) == 0
+
+    out = capsys.readouterr().out
+    assert "Hill View Lodge" in out and "logged out everywhere" in out
+    assert "newpassword1" not in out
+    me = client.get("/auth/me")
+    assert (me.status_code, me.json()["code"]) == (401, "session_expired")
+    assert _login(client, "oldpassword1").status_code == 401
+    assert _login(client, "newpassword1").status_code == 200
+    [event] = db.query(AuditEvent).filter_by(action="user.password_reset").all()
+    assert (event.tenant_id, event.actor_type, event.entity_id) == (desk_user.tenant_id, "system", str(desk_user.id))
+    assert "newpassword1" not in (event.summary or "")
+
+
+def test_reset_password_for_an_unknown_email_changes_nothing(db, capsys):
+    args = ["reset-password", "--email", "nobody@example.com"]
+    assert main(args, db=db, environ=NEW, getpass=_no_prompt) == 1
+    assert "No user with that email" in capsys.readouterr().err
+    assert db.query(AuditEvent).filter_by(action="user.password_reset").count() == 0
+
+
+def test_reset_password_too_short_changes_nothing(db, client, capsys, desk_user):
+    assert _login(client, "oldpassword1").status_code == 200
+
+    assert main(RESET, db=db, environ={"NEW_PASSWORD": "short"}, getpass=_no_prompt) == 1
+
+    assert "at least 8" in capsys.readouterr().err
+    assert client.get("/auth/me").status_code == 200  # the session survived
+    assert _login(client, "oldpassword1").status_code == 200
+    assert db.query(AuditEvent).filter_by(action="user.password_reset").count() == 0
+
+
+def test_reset_password_asks_twice_without_the_env_var(db, client, desk_user):
+    answers = iter(["newpassword1", "newpassword1"])
+    assert main(RESET, db=db, environ={}, getpass=lambda p: next(answers)) == 0
+    assert _login(client, "newpassword1").status_code == 200
+
+
+def test_reset_password_with_mismatched_prompts_changes_nothing(db, client, capsys, desk_user):
+    answers = iter(["newpassword1", "different1"])
+    assert main(RESET, db=db, environ={}, getpass=lambda p: next(answers)) == 1
+    assert "don't match" in capsys.readouterr().err
+    assert _login(client, "oldpassword1").status_code == 200
+
+
+def test_reset_password_warns_when_the_account_is_deactivated(db, capsys, desk_user):
+    desk_user.is_active = False
+    db.commit()
+    assert main(RESET, db=db, environ=NEW, getpass=_no_prompt) == 0
+    assert "deactivated" in capsys.readouterr().out

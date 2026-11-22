@@ -4,10 +4,11 @@
     venv\\Scripts\\python.exe -m app.cli create-tenant --name "Sea View Lodge" \\
         --contact-email desk@seaview.in --contact-phone 9000000000 \\
         --admin-email owner@seaview.in --admin-name "Owner"
+    venv\\Scripts\\python.exe -m app.cli reset-password --email desk@seaview.in
 
 Passwords are never command-line arguments (they'd land in shell history). They come
-from an environment variable (SUPERADMIN_PASSWORD / TENANT_ADMIN_PASSWORD), or the
-command asks for them twice without echoing.
+from an environment variable (SUPERADMIN_PASSWORD / TENANT_ADMIN_PASSWORD / NEW_PASSWORD),
+or the command asks for them twice without echoing.
 """
 import argparse
 import getpass as getpass_module
@@ -45,6 +46,15 @@ def _parser() -> argparse.ArgumentParser:
     tenant.add_argument("--address")
     tenant.add_argument("--admin-email", required=True)
     tenant.add_argument("--admin-name", required=True)
+
+    # >>> EXPLANATION (review note; delete this block once agreed) >>>
+    # A third command: reset-password --email <the user's login email>.
+    # Like the others, the new password is never a command-line argument (it would stay in the
+    # PowerShell history): it's asked twice without echoing, or taken from NEW_PASSWORD.
+    # It works for any lodge user (admin, manager, receptionist); not for superadmins.
+    # <<< EXPLANATION <<<
+    reset = commands.add_parser("reset-password", help="Set a new password for a lodge user (by email)")
+    reset.add_argument("--email", required=True)
     return parser
 
 
@@ -52,7 +62,7 @@ def main(argv: list[str] | None = None, *, db: Session | None = None,
          environ: Mapping[str, str] = os.environ,
          getpass: Callable[[str], str] = getpass_module.getpass) -> int:
     """Returns the exit code. Tests pass their own db, environ and getpass."""
-    from app.service import platform_service, tenant_service
+    from app.service import platform_service, tenant_service, user_service
 
     args = _parser().parse_args(argv)
     own_session = db is None
@@ -67,7 +77,24 @@ def main(argv: list[str] | None = None, *, db: Session | None = None,
             password = _password("SUPERADMIN_PASSWORD", environ, getpass)
             user = platform_service.create_superadmin(db, email=email, name=args.name, password=password)
             print(f"Created superadmin {user.email} (id {user.id}).")
-        else:
+        elif args.command == "reset-password":
+            # >>> EXPLANATION (review note; delete this block once agreed) >>>
+            # 1. _password(...): NEW_PASSWORD if set, else asks twice (same helper as the others).
+            # 2. user_service.reset_password_by_operator: finds the user, checks the rules
+            #    (8+ characters), saves the hash, ends all their sessions, writes the audit row,
+            #    commits. An unknown email or a too-short password raises a DomainError, which
+            #    the `except DomainError` below turns into "Error: ..." and exit code 1, with
+            #    nothing changed.
+            # 3. Prints which lodge the user belongs to, so you can check it's the right person.
+            # 4. A deactivated user stays deactivated: say so, or you'd wonder why login fails.
+            # <<< EXPLANATION <<<
+            password = _password("NEW_PASSWORD", environ, getpass)
+            user = user_service.reset_password_by_operator(db, email=args.email, new_password=password)
+            print(f"Password reset for {user.email} (lodge: {user.tenant.name}). "
+                  "They have been logged out everywhere.")
+            if not user.is_active:
+                print("Note: this account is deactivated. Reactivate it in Setup -> Users before they can log in.")
+        elif args.command == "create-tenant":
             password = _password("TENANT_ADMIN_PASSWORD", environ, getpass)
             tenant, admin = tenant_service.create_tenant(
                 db, name=args.name, contact_email=args.contact_email, contact_phone=args.contact_phone,

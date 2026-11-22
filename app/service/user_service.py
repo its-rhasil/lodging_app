@@ -6,12 +6,12 @@ Guardrails (architecture.md §6.4, DL-R05):
 - nobody deactivates themselves or edits their own overrides;
 - a grant is limited to permissions the person granting it holds.
 """
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.errors import NotFound, PermissionDenied, ValidationFailed
 from app.core.permissions import PERMISSIONS, ROLE_PERMISSIONS
-from app.core.principal import Principal
+from app.core.principal import SYSTEM, Principal
 from app.core.request_context import RequestMeta
 from app.core.security import hash_password, normalize_email, utcnow, validate_new_password
 from app.models import Permission, User, UserPermissionOverride, UserSession
@@ -72,6 +72,23 @@ def create_user(db: Session, principal: Principal, *, email: str, name: str, pas
     return user
 
 
+# >>> EXPLANATION (review note; delete this block once agreed) >>>
+# _revoke_all_sessions(db, user_id): ends every still-open login session of one user, now.
+#   It sets revoked_at = now on each of their user_sessions rows that isn't ended yet.
+#   Any later request with one of those cookies gets "Your session has ended. Please log in
+#   again." (auth_service.check_session_alive checks revoked_at).
+#   These are the same lines deactivate_user already had (next edit moves them here), so
+#   deactivating a user and resetting a password log people out in exactly the same way.
+# <<< EXPLANATION <<<
+def _revoke_all_sessions(db: Session, user_id: int) -> None:
+    """Log the user out everywhere, now (not at their next request)."""
+    db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == user_id, UserSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+
+
 def deactivate_user(db: Session, principal: Principal, user_id: int, *, meta: RequestMeta) -> User:
     user = _get_user(db, principal, user_id, lock=True)
     if user.id == principal.user_id:
@@ -81,14 +98,8 @@ def deactivate_user(db: Session, principal: Principal, user_id: int, *, meta: Re
     if not user.is_active:
         return user  # already done; nothing to audit
 
-    now = utcnow()
     user.is_active = False
-    # Log them out everywhere, now (not at their next request).
-    db.execute(
-        update(UserSession)
-        .where(UserSession.user_id == user.id, UserSession.revoked_at.is_(None))
-        .values(revoked_at=now)
-    )
+    _revoke_all_sessions(db, user.id)  # same lines as before, moved into the helper above
     audit_service.record(
         db, action="user.deactivated", actor=principal.actor, tenant_id=principal.tenant_id,
         entity_type="user", entity_id=user.id, summary=f"Deactivated {user.email}",
@@ -168,3 +179,26 @@ def set_overrides(db: Session, principal: Principal, user_id: int, overrides: li
         )
     db.commit()
     return _detail(db, user)
+
+def _set_password(db: Session, user: User, new_password: str) -> None:
+    """New password, and every open session ends. The caller audits and commits."""
+    validate_new_password(new_password)
+    user.hashed_password = hash_password(new_password)
+    _revoke_all_sessions(db, user.id)
+
+
+def reset_password_by_operator(db: Session, *, email: str, new_password: str) -> User:
+    """CLI support tool: set a new password for any lodge user, found by email."""
+    user = db.scalars(
+        select(User).where(func.lower(User.email) == normalize_email(email)).with_for_update()
+    ).first()
+    if user is None:
+        raise NotFound("No user with that email.", code="user_not_found")
+    _set_password(db, user, new_password)
+    audit_service.record(
+        db, action="user.password_reset", actor=SYSTEM, tenant_id=user.tenant_id,
+        entity_type="user", entity_id=user.id,
+        summary=f"Password of {user.email} reset by the operator; all sessions ended",
+    )
+    db.commit()
+    return user
