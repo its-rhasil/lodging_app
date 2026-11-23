@@ -1,15 +1,15 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router";
 import { ApiError, api } from "../api";
 import { TXN_LABELS, balanceClass, dateTime, localInputToIso, money } from "../format";
 import { useSession } from "../session";
 import { PAYMENT_METHODS, type Offer, type Room, type StayDetail, type StayPlan, type Transaction } from "../types";
-import { ActionButton, DateTimeInput, ErrorBox, FormModal, Loading, ReasonModal } from "../ui";
+import { ActionButton, DateTimeInput, ErrorBox, FormModal, Loading, Modal, ReasonModal } from "../ui";
 import { useLoad } from "../useLoad";
 
 type Dialog =
   | { kind: "payment" } | { kind: "charge" } | { kind: "refund" } | { kind: "extend" }
-  | { kind: "change-room" } | { kind: "convert" } | { kind: "force-checkout" } | { kind: "correct-price" }
+  | { kind: "change-room" } | { kind: "convert" } | { kind: "checkout" } | { kind: "correct-price" }
   | { kind: "cancel" }
   | { kind: "waive"; txn: Transaction } | { kind: "reverse"; txn: Transaction };
 
@@ -20,7 +20,6 @@ export function StayPage() {
   const { data: stay, error, reload } = useLoad(() => api.get<StayDetail>(`/stays/${stayId}`), [stayId]);
   const { data: plans } = useLoad(() => api.get<StayPlan[]>("/stay-plans"));
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [actionError, setActionError] = useState<unknown>(null);
 
   if (!stay) return error ? <ErrorBox error={error} /> : <Loading />;
 
@@ -32,22 +31,6 @@ export function StayPage() {
   // While staying: any payment. After checkout: only towards what is still owed (DL-R22).
   const canPay = can("payment.record") && open && (active || balance > 0);
   const close = () => { setDialog(null); reload(); };
-
-  const checkout = async () => {
-    setActionError(null);
-    try {
-      await api.post(`/stays/${stay.id}/checkout`);
-      reload();
-    } catch (err) {
-      if (err instanceof ApiError && err.code === "balance_outstanding" && can("folio.close_with_balance")) {
-        setDialog({ kind: "force-checkout" });
-      } else if (err instanceof ApiError && err.code === "reason_required") {
-        setDialog({ kind: "force-checkout" });
-      } else {
-        setActionError(err);
-      }
-    }
-  };
 
   return (
     <div className="stack">
@@ -90,12 +73,13 @@ export function StayPage() {
         {active && can("stay.change_room") && <ActionButton onClick={() => setDialog({ kind: "change-room" })}>Change room</ActionButton>}
         {active && !isDaily && can("stay.convert_to_daily") && <ActionButton onClick={() => setDialog({ kind: "convert" })}>Convert to full day</ActionButton>}
         {active && can("stay.extend") && <ActionButton onClick={() => setDialog({ kind: "extend" })}>Extend</ActionButton>}
-        {active && can("stay.check_out") && <ActionButton className="danger" onClick={checkout}>Check out</ActionButton>}
+        {active && can("stay.check_out") && (
+          <ActionButton className="danger" onClick={() => setDialog({ kind: "checkout" })}>Check out</ActionButton>
+        )}
         {active && can("stay.check_in") && (
           <ActionButton className="secondary" onClick={() => setDialog({ kind: "cancel" })}>Cancel check-in</ActionButton>
         )}
       </div>
-      <ErrorBox error={actionError} />
 
       <div className="table-wrap">
         <table>
@@ -150,12 +134,109 @@ export function StayPage() {
                      label="Why is this being reversed?" submitLabel="Reverse" onClose={close}
                      onSubmit={(reason) => api.post(`/stays/${stay.id}/folio/transactions/${dialog.txn.id}/reverse`, { reason })} />
       )}
-      {dialog?.kind === "force-checkout" && (
-        <ReasonModal title={`Check out owing ${money(balance)}?`} submitLabel="Check out with balance" onClose={close}
-                     label="The stay moves to Pending balances. Why is the guest leaving without paying?"
-                     onSubmit={(reason) => api.post(`/stays/${stay.id}/checkout`, { force_reason: reason })} />
-      )}
+      {dialog?.kind === "checkout" && <CheckoutDialog stay={stay} balance={balance} onClose={close} />}
     </div>
+  );
+}
+
+// ---- How this works ----
+// Check out opens this dialog instead of checking out at once (owner, 2026-11-23).
+// - Default: the checkout time is now (the moment the button in the dialog is pressed).
+// - "The guest left earlier": a date + time, sent as checkout_at. The API saves it as the
+//   checkout time and stops room charges there. Further back than the lodge's backdate window
+//   (Setup → Settings) a reason box appears; the API also requires a manager for that.
+// - Leaving with money owed: the API answers reason_required (for the balance). If this user
+//   may check out with a balance, the dialog adds "Why is the guest leaving without paying?"
+//   and sends the same time again with force_reason. Without that permission the API's own
+//   message is shown ("Take the payment, or ask a manager...").
+// - charges_after_checkout: a room charge for time after the guest left is already on the
+//   bill. The API's message names it; a manager reverses it on this page, then try again.
+// - The balance shown is the bill as it stands now; with an earlier time it can only stay the
+//   same (later charges block the checkout instead of being dropped silently).
+// ---- end ----
+function CheckoutDialog({ stay, balance, onClose }: { stay: StayDetail; balance: number; onClose: () => void }) {
+  const { can, settings } = useSession();
+  const [earlier, setEarlier] = useState(false);
+  const [leftLocal, setLeftLocal] = useState("");
+  const [backdateReason, setBackdateReason] = useState("");
+  const [askBackdateReason, setAskBackdateReason] = useState(false); // the API asked for it
+  const [owing, setOwing] = useState<string | null>(null);           // balance owed, once the API says so
+  const [forceReason, setForceReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const backdateWindow = settings?.max_backdate_minutes ?? 120;
+  const minutesBack = earlier && leftLocal ? (Date.now() - new Date(leftLocal).getTime()) / 60000 : 0;
+  const showBackdateReason = earlier && (minutesBack > backdateWindow || askBackdateReason);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/stays/${stay.id}/checkout`, {
+        checkout_at: earlier && leftLocal ? localInputToIso(leftLocal) : null,
+        backdate_reason: showBackdateReason ? backdateReason.trim() || null : null,
+        force_reason: owing !== null ? forceReason.trim() || null : null,
+      });
+      onClose();
+    } catch (err) {
+      const field = err instanceof ApiError ? (err.details as { field?: string } | null)?.field : undefined;
+      const owed = err instanceof ApiError ? (err.details as { balance?: string } | null)?.balance : undefined;
+      if (err instanceof ApiError && err.code === "reason_required" && field === "backdate_reason") {
+        setAskBackdateReason(true);
+        setError(err);
+      } else if (err instanceof ApiError && err.code === "reason_required" && owed && can("folio.close_with_balance")) {
+        setOwing(owed);
+      } else {
+        setError(err);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Check out" onClose={onClose}>
+      <form onSubmit={submit} className="stack">
+        <div>
+          <strong>Room {stay.room_number} · {stay.guest.full_name}</strong>
+          <div className="muted">
+            {balance > 0 ? `Guest owes ${money(balance)}` : balance < 0 ? `Guest is owed ${money(-balance)}` : "Bill settled"}
+          </div>
+        </div>
+
+        <label className="check">
+          <input type="checkbox" checked={earlier} onChange={(e) => setEarlier(e.target.checked)} />
+          The guest left earlier
+        </label>
+        {earlier ? (
+          <label>Left at<DateTimeInput onChange={setLeftLocal} required /></label>
+        ) : (
+          <span className="muted">Checkout time: now</span>
+        )}
+        {showBackdateReason && (
+          <label>Reason (needed beyond {backdateWindow} min)
+            <input value={backdateReason} onChange={(e) => setBackdateReason(e.target.value)} required />
+          </label>
+        )}
+
+        {owing !== null && (
+          <label>
+            The guest owes {money(owing)}. The stay moves to Pending balances. Why is the guest leaving without paying?
+            <textarea value={forceReason} onChange={(e) => setForceReason(e.target.value)} required rows={3} autoFocus />
+          </label>
+        )}
+
+        <ErrorBox error={error} />
+        <div className="row end">
+          <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+          <ActionButton type="submit" className="danger" disabled={busy}>
+            {busy ? "Saving…" : owing !== null ? "Check out with balance" : "Check out"}
+          </ActionButton>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
