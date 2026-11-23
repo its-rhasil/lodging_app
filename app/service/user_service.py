@@ -65,21 +65,13 @@ def create_user(db: Session, principal: Principal, *, email: str, name: str, pas
     db.flush()  # a taken email fails here: uq_users_email -> 409 email_taken
     audit_service.record(
         db, action="user.created", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="user", entity_id=user.id, summary=f"Created {role_code} {user.email}",
+        entity_type="user", entity_id=user.id, summary=f"Created {role_code} {user.name}",
         changes={"email": [None, user.email], "role_code": [None, role_code]}, meta=meta,
     )
     db.commit()
     return user
 
 
-# >>> EXPLANATION (review note; delete this block once agreed) >>>
-# _revoke_all_sessions(db, user_id): ends every still-open login session of one user, now.
-#   It sets revoked_at = now on each of their user_sessions rows that isn't ended yet.
-#   Any later request with one of those cookies gets "Your session has ended. Please log in
-#   again." (auth_service.check_session_alive checks revoked_at).
-#   These are the same lines deactivate_user already had (next edit moves them here), so
-#   deactivating a user and resetting a password log people out in exactly the same way.
-# <<< EXPLANATION <<<
 def _revoke_all_sessions(db: Session, user_id: int) -> None:
     """Log the user out everywhere, now (not at their next request)."""
     db.execute(
@@ -102,7 +94,7 @@ def deactivate_user(db: Session, principal: Principal, user_id: int, *, meta: Re
     _revoke_all_sessions(db, user.id)  # same lines as before, moved into the helper above
     audit_service.record(
         db, action="user.deactivated", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="user", entity_id=user.id, summary=f"Deactivated {user.email}",
+        entity_type="user", entity_id=user.id, summary=f"Deactivated {user.name}",
         changes={"is_active": [True, False]}, meta=meta,
     )
     db.commit()
@@ -117,7 +109,7 @@ def reactivate_user(db: Session, principal: Principal, user_id: int, *, meta: Re
     user.is_active = True
     audit_service.record(
         db, action="user.reactivated", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="user", entity_id=user.id, summary=f"Reactivated {user.email}",
+        entity_type="user", entity_id=user.id, summary=f"Reactivated {user.name}",
         changes={"is_active": [False, True]}, meta=meta,
     )
     db.commit()
@@ -174,7 +166,7 @@ def set_overrides(db: Session, principal: Principal, user_id: int, overrides: li
     if before != after:
         audit_service.record(
             db, action="user.permissions.updated", actor=principal.actor, tenant_id=principal.tenant_id,
-            entity_type="user", entity_id=user.id, summary=f"Changed permission overrides of {user.email}",
+            entity_type="user", entity_id=user.id, summary=f"Changed permission overrides of {user.name}",
             changes={"overrides": [before, after]}, meta=meta,
         )
     db.commit()
@@ -198,7 +190,7 @@ def reset_password_by_operator(db: Session, *, email: str, new_password: str) ->
     audit_service.record(
         db, action="user.password_reset", actor=SYSTEM, tenant_id=user.tenant_id,
         entity_type="user", entity_id=user.id,
-        summary=f"Password of {user.email} reset by the operator; all sessions ended",
+        summary=f"Password of {user.name} reset by the operator; all sessions ended",
     )
     db.commit()
     return user

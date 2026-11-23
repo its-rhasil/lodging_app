@@ -91,7 +91,7 @@ def create_room(db: Session, principal: Principal, *, room_type_id: int, room_nu
     db.flush()  # a taken number fails here: uq_room_number_per_tenant -> 409 room_number_taken
     audit_service.record(
         db, action="room.created", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="room", entity_id=room.id, summary=f"Created room {room_number}",
+        entity_type="room", entity_id=room.id, summary=f"Room {room_number} · Created",
         changes={"room_number": [None, room_number], "room_type_id": [None, room_type_id]}, meta=meta,
     )
     db.commit()
@@ -125,7 +125,7 @@ def update_room(db: Session, principal: Principal, room_id: int, fields: dict, *
     db.flush()  # uq_room_number_per_tenant on a renumber
     audit_service.record(
         db, action="room.updated", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="room", entity_id=room.id, summary=f"Updated room {room.room_number}",
+        entity_type="room", entity_id=room.id, summary=f"Room {room.room_number} · Updated",
         changes=changes, meta=meta,
     )
     db.commit()
@@ -145,7 +145,7 @@ def set_status(db: Session, principal: Principal, room_id: int, new_status: str,
     audit_service.record(
         db, action="room.status_changed", actor=principal.actor, tenant_id=principal.tenant_id,
         entity_type="room", entity_id=room.id,
-        summary=f"Room {room.room_number}: {old_status} -> {new_status}",
+        summary=f"Room {room.room_number} · {old_status.capitalize()} → {new_status.capitalize()}",
         changes={"operational_status": [old_status, new_status]}, meta=meta,
     )
     db.commit()

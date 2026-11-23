@@ -103,7 +103,7 @@ def create_room_type(db: Session, principal: Principal, *, name: str, descriptio
     db.flush()
     audit_service.record(
         db, action="room_type.created", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="room_type", entity_id=room_type.id, summary=f"Created room type {room_type.name}",
+        entity_type="room_type", entity_id=room_type.id, summary=f"Room-type: {room_type.name} · Created",
         changes={"name": [None, room_type.name], "capacity": [None, capacity],
                  "rates": [None, _rates_for_audit(rates)]},
         meta=meta,
@@ -148,7 +148,7 @@ def update_room_type(db: Session, principal: Principal, room_type_id: int, field
     db.flush()  # uq_room_type_name_per_tenant on a rename
     audit_service.record(
         db, action="room_type.updated", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="room_type", entity_id=room_type.id, summary=f"Updated room type {room_type.name}",
+        entity_type="room_type", entity_id=room_type.id, summary=f"Room-type: {room_type.name} · Updated",
         changes=changes, meta=meta,
     )
     db.commit()

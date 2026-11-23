@@ -46,7 +46,7 @@ def login(db: Session, *, email: str, password: str, meta: RequestMeta) -> tuple
     db.flush()
     audit_service.record(
         db, action="auth.login", actor=Actor.tenant_user(user.id), tenant_id=user.tenant_id,
-        entity_type="user", entity_id=user.id, summary=f"{user.email} logged in", meta=meta,
+        entity_type="user", entity_id=user.id, summary=f"Log in: {user.name}", meta=meta,
     )
     db.commit()
     return raw_token, user
@@ -78,7 +78,7 @@ def logout(db: Session, *, token: str | None, meta: RequestMeta) -> None:
     session.revoked_at = utcnow()
     audit_service.record(
         db, action="auth.logout", actor=Actor.tenant_user(user.id), tenant_id=user.tenant_id,
-        entity_type="user", entity_id=user.id, summary=f"{user.email} logged out", meta=meta,
+        entity_type="user", entity_id=user.id, summary=f"Log out: {user.name}", meta=meta,
     )
     db.commit()
 

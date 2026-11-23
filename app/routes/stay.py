@@ -64,8 +64,8 @@ def check_in(payload: CheckInRequest, principal: Principal = Depends(can_check_i
 def checkout(stay_id: int, payload: CheckoutIn | None = None, principal: Principal = Depends(can_check_out),
              db: Session = Depends(get_db), now: datetime = Depends(get_now),
              meta: RequestMeta = Depends(get_request_meta)):
-    force_reason = payload.force_reason if payload else None
-    return stay_service.checkout(db, principal, stay_id, force_reason=force_reason, now=now, meta=meta)
+    payload = payload or CheckoutIn()
+    return stay_service.checkout(db, principal, stay_id, now=now, meta=meta, **payload.model_dump())
 
 
 @router.patch("/{stay_id}/extend", response_model=StayOut)

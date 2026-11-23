@@ -47,7 +47,7 @@ def create_plan(db: Session, principal: Principal, *, name: str, period_hours: i
     db.flush()  # a taken name fails here: uq_stay_plan_name -> 409 stay_plan_name_taken
     audit_service.record(
         db, action="stay_plan.created", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="stay_plan", entity_id=plan.id, summary=f"Created stay plan {plan.name}",
+        entity_type="stay_plan", entity_id=plan.id, summary=f"Stay plan: {plan.name} · Created",
         changes={"name": [None, plan.name], "period_hours": [None, period_hours],
                  "grace_minutes": [None, grace_minutes]},
         meta=meta,
@@ -79,7 +79,7 @@ def update_plan(db: Session, principal: Principal, plan_id: int, fields: dict, *
     db.flush()  # uq_stay_plan_name on a rename
     audit_service.record(
         db, action="stay_plan.updated", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="stay_plan", entity_id=plan.id, summary=f"Updated stay plan {plan.name}",
+        entity_type="stay_plan", entity_id=plan.id, summary=f"Stay plan: {plan.name} · Updated",
         changes=changes, meta=meta,
     )
     db.commit()
@@ -105,7 +105,7 @@ def delete_plan(db: Session, principal: Principal, plan_id: int, *, meta: Reques
     removed_rates = db.execute(delete(RoomTypeRate).where(RoomTypeRate.stay_plan_id == plan.id)).rowcount
     audit_service.record(
         db, action="stay_plan.deleted", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="stay_plan", entity_id=plan.id, summary=f"Deleted stay plan {plan.name}",
+        entity_type="stay_plan", entity_id=plan.id, summary=f"Stay plan: {plan.name} · Deleted",
         changes={"name": [plan.name, None], "rates_removed": [removed_rates, None]}, meta=meta,
     )
     db.delete(plan)

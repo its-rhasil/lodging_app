@@ -199,7 +199,7 @@ def check_in(db: Session, principal: Principal, *, room_id: int, stay_plan_id: i
     audit_service.record(
         db, action="stay.checked_in", actor=principal.actor, tenant_id=tenant_id,
         entity_type="stay", entity_id=stay.id,
-        summary=f"Checked in {guest_row.full_name} to room {room.room_number} ({plan.name})",
+        summary=f"Room {room.room_number} · Checked in {guest_row.full_name} · {plan.name}",
         changes={
             "room_id": [None, room.id], "guest_id": [None, guest_row.id], "stay_plan_id": [None, plan.id],
             "occupancy": [None, occupancy], "listed_price": [None, str(listed)],
@@ -237,16 +237,87 @@ def lock_folio(db: Session, stay: Stay) -> Folio:
     ).one()
 
 
+def _resolve_checkout_time(db: Session, principal: Principal, stay: Stay, requested: datetime | None,
+                           reason: str | None, now: datetime) -> datetime:
+    """When the guest left: `requested`, else now (owner, 2026-11-23)."""
+    if requested is None:
+        return now
+    if requested > now + CLOCK_TOLERANCE:
+        raise ValidationFailed("The checkout time can't be in the future.", code="checkout_in_future")
+    if requested <= stay.actual_check_in_at:
+        raise ValidationFailed("The checkout time must be after the check-in time.",
+                               code="checkout_before_check_in")
+    if now - requested > MAX_BACKDATE:
+        raise ValidationFailed("The checkout time is more than 30 days ago. Check the date.",
+                               code="checkout_too_old")
+
+    # The guest can't have left before their last room change or conversion to full day.
+    last_move = db.scalar(
+        select(func.max(StayRoomMove.moved_at))
+        .where(StayRoomMove.tenant_id == stay.tenant_id, StayRoomMove.stay_id == stay.id)
+    )
+    for changed_at in (last_move, stay.converted_at):
+        if changed_at is not None and requested < changed_at:
+            raise ValidationFailed("The guest changed room or plan after this time. Pick a later time.",
+                                   code="checkout_before_last_change")
+
+    # Same rule as a backdated check-in: further back than the window needs a manager and a reason.
+    window = db.scalar(select(TenantSettings.max_backdate_minutes)
+                       .where(TenantSettings.tenant_id == principal.tenant_id))
+    if now - requested > timedelta(minutes=window):
+        if not principal.has("stay.backdate"):
+            raise PermissionDenied(f"Only a manager can backdate a checkout by more than {window} minutes.",
+                                   code="backdate_not_allowed", details={"permission": "stay.backdate"})
+        if not reason:
+            raise ValidationFailed("A reason is required to backdate this far.", code="reason_required",
+                                   details={"field": "backdate_reason"})
+    return min(requested, now)  # a few seconds ahead (clock difference) counts as now
+
+
+def _room_charges_after(db: Session, folio: Folio, stay: Stay, left_at: datetime) -> list[FolioTransaction]:
+    """Live room charges for periods that weren't due yet when the guest left.
+
+    They exist when someone opened the stay after the guest left and a new period fell due.
+    """
+    due = posting_service.periods_due(stay.actual_check_in_at, left_at, stay.period_hours, stay.grace_minutes)
+    reversed_ids = select(FolioTransaction.related_txn_id).where(
+        FolioTransaction.folio_id == folio.id,
+        FolioTransaction.txn_type == "reversal",
+    )
+    return list(db.scalars(
+        select(FolioTransaction)
+        .where(
+            FolioTransaction.folio_id == folio.id,
+            FolioTransaction.txn_type == "room_charge",
+            FolioTransaction.posting_key.startswith(f"room:{stay.stay_plan_id}:"),
+            FolioTransaction.period_no > due,
+            FolioTransaction.id.not_in(reversed_ids),
+        )
+        .order_by(FolioTransaction.period_no)
+    ))
+
+
 def checkout(db: Session, principal: Principal, stay_id: int, *, force_reason: str | None,
+             checkout_at: datetime | None = None, backdate_reason: str | None = None,
              now: datetime, meta: RequestMeta) -> dict:
     """DL-P08: post due charges, then settle. 0 -> close the folio; owed -> forced checkout
-    (folio.close_with_balance + reason, folio stays open); in credit -> refund first."""
+    (folio.close_with_balance + reason, folio stays open); in credit -> refund first.
+    checkout_at: when the guest actually left (default now); charges stop there."""
     stay, room = lock_stay_and_room(db, principal.tenant_id, stay_id)
     if stay.status != "active":
         raise Conflict("This stay is already checked out.", code="stay_not_active")
+    backdate_reason = (backdate_reason or "").strip() or None
+    left_at = _resolve_checkout_time(db, principal, stay, checkout_at, backdate_reason, now)
     folio = lock_folio(db, stay)
 
-    posting_service.post_due_room_charges(db, folio, stay, now)
+    # Charges stop when the guest left, not when the desk pressed the button.
+    posting_service.post_due_room_charges(db, folio, stay, left_at)
+    late = _room_charges_after(db, folio, stay, left_at)
+    if late:
+        names = ", ".join(t.description for t in late)
+        raise Conflict(f"The bill has room charges for after the guest left ({names}). "
+                       "Reverse them, then check out again.",
+                       code="charges_after_checkout", details={"transaction_ids": [t.id for t in late]})
     balance = folio_balance(db, folio.id)
     force_reason = (force_reason or "").strip() or None
 
@@ -255,7 +326,7 @@ def checkout(db: Session, principal: Principal, stay_id: int, *, force_reason: s
                        code="refund_required", details={"balance": str(balance)})
     if balance > 0:
         if not principal.has("folio.close_with_balance"):
-            raise PermissionDenied(f"The guest owes {balance}. Take the payment, or ask a manager to check out.",
+            raise PermissionDenied(f"The guest owes {balance}. Take the payment, you don't have the permission to check out.",
                                    code="balance_outstanding", details={"balance": str(balance)})
         if not force_reason:
             raise ValidationFailed("A reason is required to check out with a balance owed.",
@@ -267,17 +338,20 @@ def checkout(db: Session, principal: Principal, stay_id: int, *, force_reason: s
         folio.closed_by_user_id = principal.user_id
 
     stay.status = "checked_out"
-    stay.actual_checkout_at = now
+    stay.actual_checkout_at = left_at
     room.operational_status = "cleaning"
 
+    reasons = [force_reason, f"Backdated: {backdate_reason}" if backdate_reason else None]
     audit_service.record(
         db, action="stay.checked_out", actor=principal.actor, tenant_id=principal.tenant_id,
         entity_type="stay", entity_id=stay.id,
-        summary=f"Checked out of room {room.room_number}" + (f", owing {balance}" if balance > 0 else ""),
+        summary=f"Room {room.room_number} · Checked out {stay.guest.full_name} · {stay.stay_plan.name}" + (f", Pending: {balance}" if balance > 0 else ""),
         changes={"status": ["active", "checked_out"], "balance": [None, str(balance)],
-                 "folio_status": ["open", folio.status]},
-        reason=force_reason, meta=meta,
+                 "folio_status": ["open", folio.status],
+                 "actual_checkout_at": [None, left_at.isoformat()]},
+        reason="; ".join(r for r in reasons if r) or None, meta=meta,
     )
+
     db.commit()
     return stay_out(db, stay)
 
@@ -341,7 +415,7 @@ def change_room(db: Session, principal: Principal, stay_id: int, *, new_room_id:
     audit_service.record(
         db, action="stay.room_changed", actor=principal.actor, tenant_id=tenant_id,
         entity_type="stay", entity_id=stay.id,
-        summary=f"Moved from room {old_room.room_number} to {new_room.room_number}",
+        summary=f"Room {old_room.room_number} → {new_room.room_number} · {stay.guest.full_name}",
         changes={"room_id": [old_room.id, new_room.id],
                  "listed_price": [old_prices[0], str(listed)],
                  "agreed_price": [old_prices[1], str(agreed)],
@@ -365,7 +439,7 @@ def extend(db: Session, principal: Principal, stay_id: int, *, expected_checkout
     stay.expected_checkout_at = expected_checkout_at
     audit_service.record(
         db, action="stay.extended", actor=principal.actor, tenant_id=principal.tenant_id,
-        entity_type="stay", entity_id=stay.id, summary="Changed expected checkout",
+        entity_type="stay", entity_id=stay.id, summary=f"Room {stay.room.room_number} · Extend Stay · {stay.guest.full_name}",
         changes={"expected_checkout_at": [old.isoformat() if old else None, expected_checkout_at.isoformat()]},
         meta=meta,
     )

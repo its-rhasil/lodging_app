@@ -32,6 +32,9 @@ class CheckInRequest(BaseModel):
 class CheckoutIn(BaseModel):
     # Only for a forced checkout: the guest leaves owing money (folio.close_with_balance, DL-P08).
     force_reason: str | None = Field(default=None, max_length=500)
+    # When the guest actually left (owner, 2026-11-23). Left out: now. Must carry a timezone.
+    checkout_at: AwareDatetime | None = None
+    backdate_reason: str | None = Field(default=None, max_length=500)
 
 
 class ExtendIn(BaseModel):

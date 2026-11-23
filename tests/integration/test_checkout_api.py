@@ -151,6 +151,129 @@ def test_another_tenants_stay_is_not_found(db, client, tenant, receptionist):
     assert client.post(f"/stays/{stay_id}/checkout").status_code == 404
 
 
+# --- custom checkout time (owner, 2026-11-23) ------------------------------------------
+
+def checkout_at(client, stay_id, when, **extra):
+    return client.post(f"/stays/{stay_id}/checkout", json={"checkout_at": when.isoformat(), **extra})
+
+
+def test_custom_checkout_time_is_saved_and_audited(db, client, tenant, receptionist, fake_clock):
+    login(db, client, receptionist)
+    stay_id, _ = check_in(db, client, tenant)
+    pay(client, stay_id, "1000")
+    fake_clock.advance(hours=5)
+    left = fake_clock.now() - timedelta(hours=1)
+
+    res = checkout_at(client, stay_id, left)
+    assert res.status_code == 200
+    assert datetime.fromisoformat(res.json()["actual_checkout_at"]) == left
+    assert res.json()["folio"]["status"] == "closed"
+    [event] = db.query(AuditEvent).filter_by(action="stay.checked_out").all()
+    assert datetime.fromisoformat(event.changes["actual_checkout_at"][1]) == left
+    assert event.reason is None
+
+
+def test_charges_stop_at_the_custom_time(db, client, tenant, receptionist, fake_clock):
+    login(db, client, receptionist)
+    stay_id, _ = check_in(db, client, tenant)
+    pay(client, stay_id, "1000")
+    fake_clock.advance(hours=24, minutes=40)           # Tue 08:40: day 2 due since 08:30, not posted yet
+    left = fake_clock.now() - timedelta(minutes=25)    # left Tue 08:15, inside the grace
+
+    res = checkout_at(client, stay_id, left)
+    assert res.status_code == 200
+    assert (res.json()["folio"]["balance"], res.json()["folio"]["status"]) == ("0.00", "closed")
+    fake_clock.advance(days=3)
+    assert client.get(f"/stays/{stay_id}/folio").json()["balance"] == "0.00"
+
+
+def test_charge_already_posted_after_the_time_blocks_until_reversed(db, client, tenant, receptionist,
+                                                                    manager, fake_clock):
+    login(db, client, receptionist)
+    stay_id, _ = check_in(db, client, tenant)
+    pay(client, stay_id, "1000")
+    fake_clock.advance(hours=24, minutes=40)
+    client.get(f"/stays/{stay_id}")                    # opening the stay posts day 2
+    left = fake_clock.now() - timedelta(minutes=25)
+
+    res = checkout_at(client, stay_id, left)
+    assert res.status_code == 409
+    assert res.json()["code"] == "charges_after_checkout"
+    [late_id] = res.json()["details"]["transaction_ids"]
+    assert db.get(Stay, stay_id).status == "active"
+
+    login(db, client, manager)
+    rev = client.post(f"/stays/{stay_id}/folio/transactions/{late_id}/reverse", json={"reason": "Left 08:15"})
+    assert rev.status_code == 201
+    res = checkout_at(client, stay_id, left)
+    assert res.status_code == 200
+    assert (res.json()["folio"]["balance"], res.json()["folio"]["status"]) == ("0.00", "closed")
+
+
+def test_checkout_time_in_the_future_is_rejected(db, client, tenant, receptionist, fake_clock):
+    login(db, client, receptionist)
+    stay_id, _ = check_in(db, client, tenant)
+    res = checkout_at(client, stay_id, fake_clock.now() + timedelta(hours=1))
+    assert res.status_code == 422
+    assert res.json()["code"] == "checkout_in_future"
+
+
+def test_checkout_time_before_check_in_is_rejected(db, client, tenant, receptionist, fake_clock):
+    login(db, client, receptionist)
+    stay_id, _ = check_in(db, client, tenant)
+    fake_clock.advance(hours=1)
+    res = checkout_at(client, stay_id, fake_clock.now() - timedelta(hours=2))
+    assert res.status_code == 422
+    assert res.json()["code"] == "checkout_before_check_in"
+
+
+def test_checkout_time_without_timezone_is_rejected(db, client, tenant, receptionist):
+    login(db, client, receptionist)
+    stay_id, _ = check_in(db, client, tenant)
+    res = client.post(f"/stays/{stay_id}/checkout", json={"checkout_at": "2026-11-16T09:00:00"})
+    assert res.status_code == 422
+
+
+def test_checkout_time_before_a_room_change_is_rejected(db, client, tenant, manager, fake_clock):
+    login(db, client, manager)
+    stay_id, _ = check_in(db, client, tenant)
+    other = make_room(db, tenant)
+    db.commit()
+    fake_clock.advance(hours=3)
+    assert client.post(f"/stays/{stay_id}/change-room", json={"new_room_id": other.id}).status_code == 200
+    fake_clock.advance(hours=1)
+    res = checkout_at(client, stay_id, fake_clock.now() - timedelta(hours=2), backdate_reason="test")
+    assert res.status_code == 422
+    assert res.json()["code"] == "checkout_before_last_change"
+
+
+def test_backdated_checkout_beyond_the_window_is_manager_only(db, client, tenant, receptionist, fake_clock):
+    login(db, client, receptionist)
+    stay_id, _ = check_in(db, client, tenant)
+    pay(client, stay_id, "1000")
+    fake_clock.advance(hours=6)
+    res = checkout_at(client, stay_id, fake_clock.now() - timedelta(hours=3), backdate_reason="Forgot")
+    assert res.status_code == 403
+    assert res.json()["code"] == "backdate_not_allowed"
+
+
+def test_manager_backdated_checkout_needs_a_reason_and_is_audited(db, client, tenant, manager, fake_clock):
+    login(db, client, manager)
+    stay_id, _ = check_in(db, client, tenant)
+    pay(client, stay_id, "1000")
+    fake_clock.advance(hours=6)
+    left = fake_clock.now() - timedelta(hours=3)
+
+    res = checkout_at(client, stay_id, left)
+    assert res.status_code == 422
+    assert (res.json()["code"], res.json()["details"]["field"]) == ("reason_required", "backdate_reason")
+
+    res = checkout_at(client, stay_id, left, backdate_reason="Night shift forgot")
+    assert res.status_code == 200
+    [event] = db.query(AuditEvent).filter_by(action="stay.checked_out").all()
+    assert event.reason == "Backdated: Night shift forgot"
+
+
 # --- extend --------------------------------------------------------------------
 
 def test_extend_sets_expected_checkout_and_is_audited(db, client, tenant, receptionist, fake_clock):

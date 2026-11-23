@@ -187,7 +187,7 @@ def post_charge(db, principal, stay_id, *, amount, description, now, meta):
 
     txn = _add(db, folio, principal, txn_type="charge", direction="debit",
                amount=amount, description=description.strip())
-    _audit(db, principal, meta, "folio.charge_posted", folio, txn, f"Charge {amount}: {txn.description}")
+    _audit(db, principal, meta, "folio.charge_posted", folio, txn, f"Room {stay.room.room_number} · Charge {amount}: {txn.description} · {stay.guest.full_name}")
     db.commit()
     return folio_out(db, folio)
 
@@ -222,7 +222,7 @@ def record_payment(db, principal, stay_id, *, amount, method, reference, idempot
                payment_method=method, reference=(reference or "").strip() or None,
                posting_key=posting_key)
     _close_if_settled(db, stay, folio, now)
-    _audit(db, principal, meta, "payment.recorded", folio, txn, f"Payment {amount} by {method}")
+    _audit(db, principal, meta, "payment.recorded", folio, txn, f"Room {stay.room.room_number} · Payment {amount} by {method} · {stay.guest.full_name}")
     db.commit()
     return folio_out(db, folio), True
 
@@ -240,7 +240,7 @@ def record_refund(db, principal, stay_id, *, amount, method, reference, reason, 
 
     txn = _add(db, folio, principal, txn_type="refund", direction="debit", amount=amount,
                payment_method=method, reference=(reference or "").strip() or None, reason=reason)
-    _audit(db, principal, meta, "payment.refunded", folio, txn, f"Refund {amount} by {method}", reason)
+    _audit(db, principal, meta, "payment.refunded", folio, txn, f"Room {stay.room.room_number} · Refund {amount} by {method} · {stay.guest.full_name}", reason)
     db.commit()
     return folio_out(db, folio)
 
@@ -264,7 +264,7 @@ def waive(db, principal, stay_id, txn_id, *, amount, reason, now, meta):
     txn = _add(db, folio, principal, txn_type="waiver", direction="credit", amount=amount,
                related_txn_id=charge.id, reason=reason)
     _close_if_settled(db, stay, folio, now)
-    _audit(db, principal, meta, "folio.waived", folio, txn, f"Waived {amount} of transaction {charge.id}", reason)
+    _audit(db, principal, meta, "folio.waived", folio, txn, f"Room {stay.room.room_number} · Waived {amount} of transaction {charge.id} · {stay.guest.full_name}", reason)
     db.commit()
     return folio_out(db, folio)
 
@@ -289,7 +289,7 @@ def reverse(db, principal, stay_id, txn_id, *, reason, now, meta):
     txn = _add(db, folio, principal, txn_type="reversal", direction=opposite, amount=original.amount,
                related_txn_id=original.id, reason=reason)
     _close_if_settled(db, stay, folio, now)
-    _audit(db, principal, meta, "folio.reversed", folio, txn, f"Reversed transaction {original.id}", reason)
+    _audit(db, principal, meta, "folio.reversed", folio, txn, f"Room {stay.room.room_number} · Reversed transaction {original.id} · {stay.guest.full_name}", reason)
     db.commit()
     return folio_out(db, folio)
 
@@ -345,7 +345,7 @@ def cancel_stay(db, principal, stay_id, *, reason, now, meta):
 
     audit_service.record(
         db, action="stay.cancelled", actor=principal.actor, tenant_id=tenant_id,
-        entity_type="stay", entity_id=stay.id, summary=f"Cancelled the check-in in room {room.room_number}",
+        entity_type="stay", entity_id=stay.id, summary=f"Room {room.room_number} · Cancelled Check-in",
         changes={"status": ["active", "cancelled"], "reversed_charges": [None, [c.id for c in charges]]},
         reason=reason, meta=meta,
     )
@@ -367,7 +367,7 @@ def correct_price(db, principal, stay_id, *, agreed_price, reason, now, meta):
     """
     tenant_id = principal.tenant_id
     reason = _clean_reason(reason)
-    stay, _room = lock_stay_and_room(db, tenant_id, stay_id)
+    stay, room = lock_stay_and_room(db, tenant_id, stay_id)
     if stay.status != "active":
         raise Conflict("Only an active stay's price can be corrected.", code="stay_not_active")
     new_price = _resolve_price(principal, stay.listed_price, agreed_price)
@@ -400,7 +400,7 @@ def correct_price(db, principal, stay_id, *, agreed_price, reason, now, meta):
     stay.agreed_price = new_price
     audit_service.record(
         db, action="stay.price_corrected", actor=principal.actor, tenant_id=tenant_id,
-        entity_type="stay", entity_id=stay.id, summary=f"Price corrected from {old_price} to {new_price}",
+        entity_type="stay", entity_id=stay.id, summary=f"Room {room.room_number} · Price: {old_price} → {new_price}",
         changes={"agreed_price": [str(old_price), str(new_price)],
                  "reposted_charges": [None, [c.id for c in wrong]]},
         reason=reason, meta=meta,
@@ -473,7 +473,7 @@ def convert_to_daily(db, principal, stay_id, *, agreed_price, rate_reason, now, 
 
     audit_service.record(
         db, action="stay.converted", actor=principal.actor, tenant_id=tenant_id,
-        entity_type="stay", entity_id=stay.id, summary=f"Converted to {daily.name}",
+        entity_type="stay", entity_id=stay.id, summary=f"Room {room.room_number} · Converted to {daily.name} · {stay.guest.full_name}",
         changes={"stay_plan_id": [old_plan_id, daily.id],
                  "agreed_price": [None, str(agreed)],
                  "reversed_charges": [None, [c.id for c in short_charges]],

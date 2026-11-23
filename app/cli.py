@@ -78,16 +78,6 @@ def main(argv: list[str] | None = None, *, db: Session | None = None,
             user = platform_service.create_superadmin(db, email=email, name=args.name, password=password)
             print(f"Created superadmin {user.email} (id {user.id}).")
         elif args.command == "reset-password":
-            # >>> EXPLANATION (review note; delete this block once agreed) >>>
-            # 1. _password(...): NEW_PASSWORD if set, else asks twice (same helper as the others).
-            # 2. user_service.reset_password_by_operator: finds the user, checks the rules
-            #    (8+ characters), saves the hash, ends all their sessions, writes the audit row,
-            #    commits. An unknown email or a too-short password raises a DomainError, which
-            #    the `except DomainError` below turns into "Error: ..." and exit code 1, with
-            #    nothing changed.
-            # 3. Prints which lodge the user belongs to, so you can check it's the right person.
-            # 4. A deactivated user stays deactivated: say so, or you'd wonder why login fails.
-            # <<< EXPLANATION <<<
             password = _password("NEW_PASSWORD", environ, getpass)
             user = user_service.reset_password_by_operator(db, email=args.email, new_password=password)
             print(f"Password reset for {user.email} (lodge: {user.tenant.name}). "

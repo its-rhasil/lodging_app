@@ -47,7 +47,7 @@ def create_tenant(db: Session, *, name: str, contact_email: str, contact_phone: 
     )
     audit_service.record(
         db, action="user.created", actor=actor, tenant_id=tenant.id,
-        entity_type="user", entity_id=admin.id, summary=f"Created tenant_admin {admin_email}",
+        entity_type="user", entity_id=admin.id, summary=f"Created tenant_admin {admin_name}",
         changes={"email": [None, admin_email], "role_code": [None, "tenant_admin"]},
     )
     db.commit()
